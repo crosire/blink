@@ -9,6 +9,7 @@
 ipch/
 *.aps
 *.cachefile
+*.opendb
 *.opensdf
 *.user
 *.sdf
@@ -17,4 +18,3 @@ ipch/
 # Temporary OS files
 .DS_Store
 Thumbs.db
-Thumbs.db.meta

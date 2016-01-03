@@ -134,7 +134,6 @@
     <ClCompile Include="source\filewatcher.cpp" />
     <ClCompile Include="source\jetlink.cpp" />
     <ClCompile Include="source\jetlink_linker.cpp" />
-    <ClCompile Include="source\jetlink_reader_coff.cpp" />
     <ClCompile Include="source\jetlink_reader_msf.cpp" />
     <ClCompile Include="source\jetlink_reader_pdb.cpp" />
     <ClCompile Include="source\main.cpp" />
@@ -142,7 +141,6 @@
   <ItemGroup>
     <ClInclude Include="source\filewatcher.hpp" />
     <ClInclude Include="source\jetlink.hpp" />
-    <ClInclude Include="source\jetlink_reader_coff.hpp" />
     <ClInclude Include="source\jetlink_reader_msf.hpp" />
     <ClInclude Include="source\jetlink_reader_pdb.hpp" />
     <ClInclude Include="source\jetlink_symbols.hpp" />

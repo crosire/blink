@@ -18,7 +18,7 @@ namespace jetlink
 
 			// JMP
 			address[0] = 0xE9;
-			*reinterpret_cast<s32 *>(address + 1) = jump_target - (address + 5);
+			*reinterpret_cast<int32_t *>(address + 1) = jump_target - (address + 5);
 
 			VirtualProtect(address, 5, protect, &protect);
 #endif
@@ -187,7 +187,7 @@ namespace jetlink
 
 			if (section.PointerToRawData == 0 && section.Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
 			{
-				assert(additional_data_base + section.SizeOfRawData < modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
+				assert(additional_data_base + section.SizeOfRawData <= modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
 
 				// Memory was already initialized to zero by VirtualAlloc
 				section.PointerToRawData = static_cast<DWORD>(additional_data_base - modulebase);

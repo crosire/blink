@@ -3,7 +3,6 @@
 #include <Windows.h>
 #include <Psapi.h>
 #include <iostream>
-#include <fstream>
 
 #pragma region CRT sections
 #pragma section(".CRT$XIA", long, read)
@@ -61,30 +60,6 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 	#pragma region Initialize module image
 	const auto imageheaders = reinterpret_cast<const IMAGE_NT_HEADERS *>(imagebase + reinterpret_cast<const IMAGE_DOS_HEADER *>(imagebase)->e_lfanew);
 
-	// Resolve imports
-	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-
-	for (size_t i = 0; import_directory_entries[i].FirstThunk != 0; i++)
-	{
-		const auto name = reinterpret_cast<const char *>(imagebase + import_directory_entries[i].Name);
-		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].Characteristics);
-		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].FirstThunk);
-
-		const HMODULE module = LoadLibraryA(name);
-
-		if (module == nullptr)
-		{
-			continue;
-		}
-
-		for (size_t k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
-		{
-			const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(imagebase + import_name_table[k].u1.AddressOfData);
-
-			import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, import->Name));
-		}
-	}
-
 	// Apply base relocations
 	auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	const auto relocation_delta = imagebase - reinterpret_cast<const BYTE *>(imageheaders->OptionalHeader.ImageBase);
@@ -116,6 +91,30 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 		}
 
 		relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(reinterpret_cast<const BYTE *>(relocation) + relocation->SizeOfBlock);
+	}
+
+	// Resolve imports
+	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+
+	for (size_t i = 0; import_directory_entries[i].FirstThunk != 0; i++)
+	{
+		const auto name = reinterpret_cast<const char *>(imagebase + import_directory_entries[i].Name);
+		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].Characteristics);
+		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].FirstThunk);
+
+		const HMODULE module = LoadLibraryA(name);
+
+		if (module == nullptr)
+		{
+			continue;
+		}
+
+		for (size_t k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
+		{
+			const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(imagebase + import_name_table[k].u1.AddressOfData);
+
+			import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, import->Name));
+		}
 	}
 
 	// Call constructors

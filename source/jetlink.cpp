@@ -265,8 +265,7 @@ namespace jetlink
 					print("Detected modification to: " + path + '\n');
 
 					// Build compiler command line
-					//std::string cmdline = "cl /c /nologo /Z7";
-					std::string cmdline = "cl /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Gm /Od /sdl /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc";
+					std::string cmdline = "cl /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc";
 					cmdline += " /Fo\"" + _compiled_module_file + "\"";
 					cmdline += " \"" + path + "\"";
 

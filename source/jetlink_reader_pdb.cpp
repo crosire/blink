@@ -11,8 +11,6 @@
  *  - Stream 2: Type info (TPI stream)
  *  - Stream 3: Debug info (DBI stream)
  *  - Stream 4: Build info, UDT source file + line info and some function identifiers (TPI header followed by CodeView records)
- *  - Stream 8: Symbol info (CodeView records)
- *  - Stream 11: Section info
  */
 
 #pragma pack(1)
@@ -1024,7 +1022,7 @@ namespace jetlink
 		}
 
 		// Read symbol info records
-		stream = msf_reader::stream(8);
+		stream = msf_reader::stream(dbiheader.symbol_record_stream);
 		std::unordered_map<std::string, ptrdiff_t> symbols;
 
 		while (stream->tell() < stream->size())
@@ -1054,7 +1052,14 @@ namespace jetlink
 					const auto info = stream->read<leaf_data>();
 					const auto mangled_name = stream->read<std::string>();
 
-					symbols[mangled_name] = info.offset + sections[info.segment - 1].virtual_address;
+					if (info.segment > sections.size())
+					{
+						symbols[mangled_name] = 0;
+					}
+					else
+					{
+						symbols[mangled_name] = info.offset + sections[info.segment - 1].virtual_address;
+					}
 					break;
 				}
 			}

@@ -104,11 +104,13 @@ namespace jetlink
 		/// </summary>
 		std::unordered_map<std::string, ptrdiff_t> symbols();
 		/// <summary>
+		/// Walks through the build info in this PDB file and returns all source file paths.
+		/// </summary>
+		std::vector<std::string> sourcefiles();
+		/// <summary>
 		/// Returns the hash table of names found in the PDB file.
 		/// </summary>
 		std::unordered_map<unsigned int, std::string> names();
-
-		std::vector<std::string> sourcefiles();
 
 	private:
 		bool _is_valid = false;

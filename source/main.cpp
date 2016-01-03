@@ -102,6 +102,7 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].Characteristics);
 		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].FirstThunk);
 
+		// It is safe to call LoadLibrary here because KERNEL32.dll is always loaded
 		const HMODULE module = LoadLibraryA(name);
 
 		if (module == nullptr)
@@ -151,8 +152,10 @@ int main(int argc, char *argv[])
 		std::cin >> pid;
 	}
 
+	// Open target application process
+	const DWORD access = PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION;
 	const HANDLE local_process = GetCurrentProcess();
-	const HANDLE remote_process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	const HANDLE remote_process = OpenProcess(access, FALSE, pid);
 
 	if (remote_process == nullptr)
 	{
@@ -214,7 +217,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Launch module main entry point in target application
-	const auto remote_entrypoint = remote_baseaddress + (reinterpret_cast<unsigned char *>(&remote_main) - static_cast<unsigned char *>(moduleinfo.lpBaseOfDll));
+	const auto remote_entrypoint = remote_baseaddress + (reinterpret_cast<BYTE *>(&remote_main) - static_cast<BYTE *>(moduleinfo.lpBaseOfDll));
 	const HANDLE remote_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(remote_entrypoint), remote_baseaddress, 0, nullptr);
 
 	if (remote_thread == nullptr)
@@ -228,7 +231,7 @@ int main(int argc, char *argv[])
 	while (WaitForSingleObject(remote_thread, 0))
 	{
 		DWORD size = 512;
-		char message[512];
+		char message[512] = "";
 
 		if (!ReadFile(local_pipe, message, size, &size, nullptr))
 		{

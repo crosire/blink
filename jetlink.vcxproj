@@ -143,7 +143,6 @@
     <ClInclude Include="source\jetlink.hpp" />
     <ClInclude Include="source\jetlink_reader_msf.hpp" />
     <ClInclude Include="source\jetlink_reader_pdb.hpp" />
-    <ClInclude Include="source\jetlink_symbols.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

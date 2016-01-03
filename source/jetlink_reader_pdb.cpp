@@ -242,11 +242,11 @@ namespace jetlink
 		}
 	}
 
-	type_table pdb_reader::types()
+	std::vector<type> pdb_reader::types()
 	{
 		if (!is_valid())
 		{
-			return type_table(0);
+			return { };
 		}
 
 		// Read type info (TPI stream)
@@ -255,79 +255,79 @@ namespace jetlink
 
 		if (header.header_size + header.content_size != stream->size())
 		{
-			return type_table(0);
+			return { };
 		}
 
 		// Skip any additional bytes that were appended to the header
 		stream->seek(header.header_size);
 
 		// Create type table
-		type_table types(header.max_index);
+		std::vector<type> types(header.max_index, { 0 });
 		// { index, base_type_index, mangled_name, size, is_builtin, is_const, is_volatile, is_unaligned, is_array, is_pointer, is_function, is_forward_reference }
-		types.insert({ 0x0003, 0x0000, "X", 0, true, false, false, false, false, false, false, false }); // T_VOID [void]
-		types.insert({ 0x0103, 0x0003, "PAX", 4, true, false, false, false, false, true, false, false }); // T_PVOID [void *]
-		types.insert({ 0x0403, 0x0003, "PAX", 4, true, false, false, false, false, true, false, false }); // T_32PVOID [void * __ptr32]
-		types.insert({ 0x0603, 0x0003, "PEAX", 8, true, false, false, false, false, true, false, false }); // T_64PVOID [void * __ptr64]
-		types.insert({ 0x0070, 0x0000, "D", 1, true, false, false, false, false, false, false, false }); // T_RCHAR [char]
-		types.insert({ 0x0470, 0x0070, "PAD", 4, true, false, false, false, false, true, false, false }); // T_32PRCHAR [char * __ptr32]
-		types.insert({ 0x0670, 0x0070, "PEAD", 8, true, false, false, false, false, true, false, false }); // T_64PRCHAR [char * __ptr64]
-		types.insert({ 0x0071, 0x0000, "_W", 2, true, false, false, false, false, false, false, false }); // T_WCHAR [wchar_t]
-		types.insert({ 0x0471, 0x0071, "PA_W", 4, true, false, false, false, false, true, false, false }); // T_32PWCHAR [wchar_t * __ptr32]
-		types.insert({ 0x0671, 0x0071, "PEA_W", 8, true, false, false, false, false, true, false, false }); // T_64PWCHAR [wchar_t * __ptr64]
-		types.insert({ 0x007A, 0x0000, "_S", 2, true, false, false, false, false, false, false, false }); // T_CHAR16 [char16_t]
-		types.insert({ 0x047A, 0x007A, "PA_S", 4, true, false, false, false, false, true, false, false }); // T_32PCHAR16 [char16_t * __ptr32]
-		types.insert({ 0x067A, 0x007A, "PEA_S", 8, true, false, false, false, false, true, false, false }); // T_64PCHAR16 [char16_t * __ptr64]
-		types.insert({ 0x007B, 0x0000, "_U", 4, true, false, false, false, false, false, false, false }); // T_CHAR32 [char32_t]
-		types.insert({ 0x047B, 0x007B, "PA_U", 4, true, false, false, false, false, true, false, false }); // T_32PCHAR32 [char32_t * __ptr32]
-		types.insert({ 0x067B, 0x007B, "PEA_U", 8, true, false, false, false, false, true, false, false }); // T_64PCHAR32 [char32_t * __ptr64]
-		types.insert({ 0x0010, 0x0000, "C", 1, true, false, false, false, false, false, false, false }); // T_CHAR [signed char]
-		types.insert({ 0x0410, 0x0010, "PAC", 4, true, false, false, false, false, true, false, false }); // T_32PCHAR [signed char * __ptr32]
-		types.insert({ 0x0610, 0x0010, "PEAC", 8, true, false, false, false, false, true, false, false }); // T_64PCHAR [signed char * __ptr64]
-		types.insert({ 0x0020, 0x0000, "E", 1, true, false, false, false, false, false, false, false }); // T_UCHAR [unsigned char]
-		types.insert({ 0x0420, 0x0020, "PAE", 4, true, false, false, false, false, true, false, false }); // T_32PUCHAR [unsigned char * __ptr32]
-		types.insert({ 0x0620, 0x0020, "PEAE", 8, true, false, false, false, false, true, false, false }); // T_64PUCHAR [unsigned char * __ptr64]
-		types.insert({ 0x0011, 0x0000, "F", 2, true, false, false, false, false, false, false, false }); // T_SHORT [short]
-		types.insert({ 0x0411, 0x0011, "PAF", 4, true, false, false, false, false, true, false, false }); // T_32PSHORT [short * __ptr32]
-		types.insert({ 0x0611, 0x0011, "PEAF", 8, true, false, false, false, false, true, false, false }); // T_64PSHORT [short * __ptr64]
-		types.insert({ 0x0021, 0x0000, "G", 2, true, false, false, false, false, false, false, false }); // T_USHORT [unsigned short]
-		types.insert({ 0x0421, 0x0021, "PAG", 4, true, false, false, false, false, true, false, false }); // T_32PUSHORT [unsigned short * __ptr32]
-		types.insert({ 0x0621, 0x0021, "PEAG", 8, true, false, false, false, false, true, false, false }); // T_64PUSHORT [unsigned short * __ptr64]
-		types.insert({ 0x0074, 0x0000, "H", 4, true, false, false, false, false, false, false, false }); // T_INT4 [int]
-		types.insert({ 0x0474, 0x0074, "PAH", 4, true, false, false, false, false, true, false, false }); // T_32PINT4 [int * __ptr32]
-		types.insert({ 0x0674, 0x0074, "PEAH", 8, true, false, false, false, false, true, false, false }); // T_64PINT4 [int * __ptr64]
-		types.insert({ 0x0075, 0x0000, "I", 4, true, false, false, false, false, false, false, false }); // T_UINT4 [unsigned int]
-		types.insert({ 0x0475, 0x0075, "PAI", 4, true, false, false, false, false, true, false, false }); // T_32PUINT4 [unsigned int * __ptr32]
-		types.insert({ 0x0675, 0x0075, "PEAI", 8, true, false, false, false, false, true, false, false }); // T_64PUINT4 [unsigned int * __ptr64]
-		types.insert({ 0x0012, 0x0000, "J", 4, true, false, false, false, false, false, false, false }); // T_LONG [long]
-		types.insert({ 0x0412, 0x0012, "PAJ", 4, true, false, false, false, false, true, false, false }); // T_32PLONG [long * __ptr32]
-		types.insert({ 0x0612, 0x0012, "PEAJ", 8, true, false, false, false, false, true, false, false }); // T_64PLONG [long * __ptr64]
-		types.insert({ 0x0022, 0x0000, "K", 4, true, false, false, false, false, false, false, false }); // T_ULONG [unsigned long]
-		types.insert({ 0x0422, 0x0022, "PAK", 4, true, false, false, false, false, true, false, false }); // T_32PULONG [unsigned long * __ptr32]
-		types.insert({ 0x0622, 0x0022, "PEAK", 8, true, false, false, false, false, true, false, false }); // T_64PULONG [unsigned long * __ptr64]
-		types.insert({ 0x0013, 0x0000, "_J", 8, true, false, false, false, false, false, false, false }); // T_QUAD [__int64]
-		types.insert({ 0x0413, 0x0013, "PA_J", 4, true, false, false, false, false, true, false, false }); // T_32PQUAD [__int64 * __ptr32]
-		types.insert({ 0x0613, 0x0013, "PEA_J", 8, true, false, false, false, false, true, false, false }); // T_64PQUAD [__inte64 * __ptr64]
-		types.insert({ 0x0023, 0x0000, "_K", 8, true, false, false, false, false, false, false, false }); // T_UQUAD [unsigned __int64]
-		types.insert({ 0x0423, 0x0023, "PA_K", 4, true, false, false, false, false, true, false, false }); // T_32PUQUAD [unsigned __int64 * __ptr32]
-		types.insert({ 0x0623, 0x0023, "PEA_K", 8, true, false, false, false, false, true, false, false }); // T_64PUQUAD [unsigned __int64 * __ptr64]
-		types.insert({ 0x0076, 0x0000, "_J", 8, true, false, false, false, false, false, false, false }); // T_INT8 [__int64]
-		types.insert({ 0x0476, 0x0076, "PA_J", 4, true, false, false, false, false, true, false, false }); // T_32PINT8 [__int64 * __ptr32]
-		types.insert({ 0x0676, 0x0076, "PEA_J", 8, true, false, false, false, false, true, false, false }); // T_64PINT8 [__int64 * __ptr64]
-		types.insert({ 0x0077, 0x0000, "_K", 8, true, false, false, false, false, false, false, false }); // T_UINT8 [unsigned __int64]
-		types.insert({ 0x0477, 0x0077, "PA_K", 4, true, false, false, false, false, true, false, false }); // T_32PUINT8 [unsigned __int64 * __ptr32]
-		types.insert({ 0x0677, 0x0077, "PEA_K", 8, true, false, false, false, false, true, false, false }); // T_64PUINT8 [unsigned __int64 * __ptr64]
-		types.insert({ 0x0040, 0x0000, "M", 4, true, false, false, false, false, false, false, false }); // T_REAL32 [float]
-		types.insert({ 0x0440, 0x0040, "PAM", 4, true, false, false, false, false, true, false, false }); // T_32PREAL32 [float * __ptr32]
-		types.insert({ 0x0640, 0x0040, "PEAM", 8, true, false, false, false, false, true, false, false }); // T_64PREAL32 [float * __ptr64]
-		types.insert({ 0x0041, 0x0000, "N", 8, true, false, false, false, false, false, false, false }); // T_REAL64 [double]
-		types.insert({ 0x0441, 0x0041, "PAN", 4, true, false, false, false, false, true, false, false }); // T_32PREAL64 [double * __ptr32]
-		types.insert({ 0x0641, 0x0041, "PEAN", 8, true, false, false, false, false, true, false, false }); // T_64PREAL64 [double * __ptr64]
-		types.insert({ 0x0030, 0x0000, "_N", 8, true, false, false, false, false, false, false, false }); // T_BOOL08 [bool]
-		types.insert({ 0x0430, 0x0030, "PA_N", 4, true, false, false, false, false, true, false, false }); // T_32PBOOL08 [bool * __ptr32]
-		types.insert({ 0x0630, 0x0030, "PEA_N", 8, true, false, false, false, false, true, false, false }); // T_64PBOOL08 [bool * __ptr64]
-		types.insert({ 0x0008, 0x0000, "J", 4, true, false, false, false, false, false, false, false }); // T_HRESULT [HRESULT]
-		types.insert({ 0x0408, 0x0008, "PAJ", 4, true, false, false, false, false, true, false, false }); // T_32PHRESULT [HRESULT * __ptr32]
-		types.insert({ 0x0608, 0x0008, "PEAJ", 8, true, false, false, false, false, true, false, false }); // T_64PHRESULT [HRESULT * __ptr64]
+		types[0x0003] = { "X", 0, 0x0000, true, false, false, false, false, false, false, false }; // T_VOID [void]
+		types[0x0103] = { "PAX", 4, 0x0003, true, false, false, false, false, true, false, false }; // T_PVOID [void *]
+		types[0x0403] = { "PAX", 4, 0x0003, true, false, false, false, false, true, false, false }; // T_32PVOID [void * __ptr32]
+		types[0x0603] = { "PEAX", 8, 0x0003, true, false, false, false, false, true, false, false }; // T_64PVOID [void * __ptr64]
+		types[0x0070] = { "D", 1, 0x0000, true, false, false, false, false, false, false, false }; // T_RCHAR [char]
+		types[0x0470] = { "PAD", 4, 0x0070, true, false, false, false, false, true, false, false }; // T_32PRCHAR [char * __ptr32]
+		types[0x0670] = { "PEAD", 8, 0x0070, true, false, false, false, false, true, false, false }; // T_64PRCHAR [char * __ptr64]
+		types[0x0071] = { "_W", 2, 0x0000, true, false, false, false, false, false, false, false }; // T_WCHAR [wchar_t]
+		types[0x0471] = { "PA_W", 4, 0x0071, true, false, false, false, false, true, false, false }; // T_32PWCHAR [wchar_t * __ptr32]
+		types[0x0671] = { "PEA_W", 8, 0x0071, true, false, false, false, false, true, false, false }; // T_64PWCHAR [wchar_t * __ptr64]
+		types[0x007A] = { "_S", 2, 0x0000, true, false, false, false, false, false, false, false }; // T_CHAR16 [char16_t]
+		types[0x047A] = { "PA_S", 4, 0x007A, true, false, false, false, false, true, false, false }; // T_32PCHAR16 [char16_t * __ptr32]
+		types[0x067A] = { "PEA_S", 8, 0x007A, true, false, false, false, false, true, false, false }; // T_64PCHAR16 [char16_t * __ptr64]
+		types[0x007B] = { "_U", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_CHAR32 [char32_t]
+		types[0x047B] = { "PA_U", 4, 0x007B, true, false, false, false, false, true, false, false }; // T_32PCHAR32 [char32_t * __ptr32]
+		types[0x067B] = { "PEA_U", 8, 0x007B, true, false, false, false, false, true, false, false }; // T_64PCHAR32 [char32_t * __ptr64]
+		types[0x0010] = { "C", 1, 0x0000, true, false, false, false, false, false, false, false }; // T_CHAR [signed char]
+		types[0x0410] = { "PAC", 4, 0x0010, true, false, false, false, false, true, false, false }; // T_32PCHAR [signed char * __ptr32]
+		types[0x0610] = { "PEAC", 8, 0x0010, true, false, false, false, false, true, false, false }; // T_64PCHAR [signed char * __ptr64]
+		types[0x0020] = { "E", 1, 0x0000, true, false, false, false, false, false, false, false }; // T_UCHAR [unsigned char]
+		types[0x0420] = { "PAE", 4, 0x0020, true, false, false, false, false, true, false, false }; // T_32PUCHAR [unsigned char * __ptr32]
+		types[0x0620] = { "PEAE", 8, 0x0020, true, false, false, false, false, true, false, false }; // T_64PUCHAR [unsigned char * __ptr64]
+		types[0x0011] = { "F", 2, 0x0000, true, false, false, false, false, false, false, false }; // T_SHORT [short]
+		types[0x0411] = { "PAF", 4, 0x0011, true, false, false, false, false, true, false, false }; // T_32PSHORT [short * __ptr32]
+		types[0x0611] = { "PEAF", 8, 0x0011, true, false, false, false, false, true, false, false }; // T_64PSHORT [short * __ptr64]
+		types[0x0021] = { "G", 2, 0x0000, true, false, false, false, false, false, false, false }; // T_USHORT [unsigned short]
+		types[0x0421] = { "PAG", 4, 0x0021, true, false, false, false, false, true, false, false }; // T_32PUSHORT [unsigned short * __ptr32]
+		types[0x0621] = { "PEAG", 8, 0x0021, true, false, false, false, false, true, false, false }; // T_64PUSHORT [unsigned short * __ptr64]
+		types[0x0074] = { "H", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_INT4 [int]
+		types[0x0474] = { "PAH", 4, 0x0074, true, false, false, false, false, true, false, false }; // T_32PINT4 [int * __ptr32]
+		types[0x0674] = { "PEAH", 8, 0x0074, true, false, false, false, false, true, false, false }; // T_64PINT4 [int * __ptr64]
+		types[0x0075] = { "I", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_UINT4 [unsigned int]
+		types[0x0475] = { "PAI", 4, 0x0075, true, false, false, false, false, true, false, false }; // T_32PUINT4 [unsigned int * __ptr32]
+		types[0x0675] = { "PEAI", 8, 0x0075, true, false, false, false, false, true, false, false }; // T_64PUINT4 [unsigned int * __ptr64]
+		types[0x0012] = { "J", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_LONG [long]
+		types[0x0412] = { "PAJ", 4, 0x0012, true, false, false, false, false, true, false, false }; // T_32PLONG [long * __ptr32]
+		types[0x0612] = { "PEAJ", 8, 0x0012, true, false, false, false, false, true, false, false }; // T_64PLONG [long * __ptr64]
+		types[0x0022] = { "K", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_ULONG [unsigned long]
+		types[0x0422] = { "PAK", 4, 0x0022, true, false, false, false, false, true, false, false }; // T_32PULONG [unsigned long * __ptr32]
+		types[0x0622] = { "PEAK", 8, 0x0022, true, false, false, false, false, true, false, false }; // T_64PULONG [unsigned long * __ptr64]
+		types[0x0013] = { "_J", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_QUAD [__int64]
+		types[0x0413] = { "PA_J", 4, 0x0013, true, false, false, false, false, true, false, false }; // T_32PQUAD [__int64 * __ptr32]
+		types[0x0613] = { "PEA_J", 8, 0x0013, true, false, false, false, false, true, false, false }; // T_64PQUAD [__inte64 * __ptr64]
+		types[0x0023] = { "_K", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_UQUAD [unsigned __int64]
+		types[0x0423] = { "PA_K", 4, 0x0023, true, false, false, false, false, true, false, false }; // T_32PUQUAD [unsigned __int64 * __ptr32]
+		types[0x0623] = { "PEA_K", 8, 0x0023, true, false, false, false, false, true, false, false }; // T_64PUQUAD [unsigned __int64 * __ptr64]
+		types[0x0076] = { "_J", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_INT8 [__int64]
+		types[0x0476] = { "PA_J", 4, 0x0076, true, false, false, false, false, true, false, false }; // T_32PINT8 [__int64 * __ptr32]
+		types[0x0676] = { "PEA_J", 8, 0x0076, true, false, false, false, false, true, false, false }; // T_64PINT8 [__int64 * __ptr64]
+		types[0x0077] = { "_K", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_UINT8 [unsigned __int64]
+		types[0x0477] = { "PA_K", 4, 0x0077, true, false, false, false, false, true, false, false }; // T_32PUINT8 [unsigned __int64 * __ptr32]
+		types[0x0677] = { "PEA_K", 8, 0x0077, true, false, false, false, false, true, false, false }; // T_64PUINT8 [unsigned __int64 * __ptr64]
+		types[0x0040] = { "M", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_REAL32 [float]
+		types[0x0440] = { "PAM", 4, 0x0040, true, false, false, false, false, true, false, false }; // T_32PREAL32 [float * __ptr32]
+		types[0x0640] = { "PEAM", 8, 0x0040, true, false, false, false, false, true, false, false }; // T_64PREAL32 [float * __ptr64]
+		types[0x0041] = { "N", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_REAL64 [double]
+		types[0x0441] = { "PAN", 4, 0x0041, true, false, false, false, false, true, false, false }; // T_32PREAL64 [double * __ptr32]
+		types[0x0641] = { "PEAN", 8, 0x0041, true, false, false, false, false, true, false, false }; // T_64PREAL64 [double * __ptr64]
+		types[0x0030] = { "_N", 8, 0x0000, true, false, false, false, false, false, false, false }; // T_BOOL08 [bool]
+		types[0x0430] = { "PA_N", 4, 0x0030, true, false, false, false, false, true, false, false }; // T_32PBOOL08 [bool * __ptr32]
+		types[0x0630] = { "PEA_N", 8, 0x0030, true, false, false, false, false, true, false, false }; // T_64PBOOL08 [bool * __ptr64]
+		types[0x0008] = { "J", 4, 0x0000, true, false, false, false, false, false, false, false }; // T_HRESULT [HRESULT]
+		types[0x0408] = { "PAJ", 4, 0x0008, true, false, false, false, false, true, false, false }; // T_32PHRESULT [HRESULT * __ptr32]
+		types[0x0608] = { "PEAJ", 8, 0x0008, true, false, false, false, false, true, false, false }; // T_64PHRESULT [HRESULT * __ptr64]
 
 		// A list of type records in CodeView format
 		for (auto current_index = header.min_index; current_index < header.max_index; current_index++)
@@ -353,9 +353,9 @@ namespace jetlink
 					};
 
 					const auto info = stream->read<leaf_data>();
-					const auto basetype = types.resolve(info.base_type_index);
+					const auto basetype = types[info.base_type_index];
 
-					types.insert({ current_index, info.base_type_index, basetype.mangled_name, basetype.size, false, (info.is_const != 0), (info.is_volatile != 0), (info.is_unaligned != 0), false, false, false, (basetype.is_forward_reference != 0) });
+					types[current_index] = { basetype.mangled_name, basetype.size, info.base_type_index, false, (info.is_const != 0), (info.is_volatile != 0), (info.is_unaligned != 0), false, false, false, (basetype.is_forward_reference != 0) };
 					break;
 				}
 				case 0x1002: // LF_POINTER
@@ -378,7 +378,7 @@ namespace jetlink
 					};
 
 					const auto info = stream->read<leaf_data>();
-					auto basetype = types.resolve(info.base_type_index);
+					auto basetype = types[info.base_type_index];
 					std::string mangled_name;
 
 					switch (info.ptr_mode)
@@ -427,7 +427,7 @@ namespace jetlink
 						mangled_name += basetype.mangled_name;
 					}
 
-					types.insert({ current_index, info.base_type_index, std::move(mangled_name), info.size, false, (info.is_const != 0), (info.is_volatile != 0), (info.is_unaligned != 0), false, true, false, false });
+					types[current_index] = { std::move(mangled_name), info.size, info.base_type_index, false, (info.is_const != 0), (info.is_volatile != 0), (info.is_unaligned != 0), false, true, false, false };
 					break;
 				}
 				case 0x1008: // LF_PROCEDURE
@@ -443,11 +443,10 @@ namespace jetlink
 					};
 
 					const auto info = stream->read<leaf_data>();
-					const auto return_type = types.resolve(info.return_type_index);
-					const auto arg_list_type = types.resolve(info.arg_list_type_index);
+					const auto return_type = types[info.return_type_index];
+					const auto arg_list_type = types[info.arg_list_type_index];
 					std::string mangled_name;
 
-					//mangled_name += '@'; // TODO: Move this to symbol creation
 					mangled_name += 'Y';
 
 					switch (info.calling_convention)
@@ -488,7 +487,7 @@ namespace jetlink
 					mangled_name += arg_list_type.mangled_name;
 					mangled_name += 'Z';
 
-					types.insert({ current_index, 0, std::move(mangled_name), 0, false, false, false, false, false, false, true, false });
+					types[current_index] = { std::move(mangled_name), 0, 0, false, false, false, false, false, false, true, false };
 					break;
 				}
 				case 0x1009: // LF_MFUNCTION
@@ -509,14 +508,14 @@ namespace jetlink
 					};
 
 					const auto info = stream->read<leaf_data>();
-					const auto return_type = types.resolve(info.return_type_index);
-					const auto arg_list_type = types.resolve(info.arg_list_type_index);
+					const auto return_type = types[info.return_type_index];
+					const auto arg_list_type = types[info.arg_list_type_index];
 					std::string mangled_name;
 
 					if (info.this_ptr_type_index != 0)
 					{
-						const auto this_ptr_type = types.resolve(info.this_ptr_type_index);
-						const auto this_ptr_basetype = types.resolve(this_ptr_type.base_type_index);
+						const auto this_ptr_type = types[info.this_ptr_type_index];
+						const auto this_ptr_basetype = types[this_ptr_type.base_type_index];
 
 						if (this_ptr_type.size == 8)
 						{
@@ -572,7 +571,7 @@ namespace jetlink
 					mangled_name += arg_list_type.mangled_name;
 					mangled_name += 'Z';
 
-					types.insert({ current_index, info.class_type_index, std::move(mangled_name), 0, false, false, false, false, false, false, true, false });
+					types[current_index] = { std::move(mangled_name), 0, info.class_type_index, false, false, false, false, false, false, true, false };
 					break;
 				}
 				case 0x1201: // LF_ARGLIST
@@ -593,7 +592,7 @@ namespace jetlink
 						}
 						else
 						{
-							const auto type = types.resolve(type_index);
+							const auto type = types[type_index];
 
 							mangled_name += type.mangled_name;
 							argument_size += type.size;
@@ -613,248 +612,7 @@ namespace jetlink
 						mangled_name += '@';
 					}
 
-					types.insert({ current_index, 0, std::move(mangled_name), argument_size, false, false, false, false, false, false, false, false });
-					break;
-				}
-				case 0x1203: // LF_FIELDLIST
-				{
-					struct leaf_data
-					{
-						uint16_t access : 2;
-						uint16_t method_type : 3;
-						uint16_t is_compiler_generated_pseudo : 1;
-						uint16_t is_not_inheritable : 1;
-						uint16_t is_not_constructable : 1;
-						uint16_t is_compiler_generated : 1;
-						uint16_t is_sealed : 1;
-						uint16_t reserved : 6;
-					};
-
-					while (stream->tell() < next_record_offset)
-					{
-						switch (stream->read<uint16_t>())
-						{
-							case 0x1400: // LF_BCLASS
-							case 0x151A: // LF_BINTERFACE
-							{
-								/*const auto attributes = stream->read<leaf_data>();
-								const auto base_type_index = stream->read<uint32_t>();
-								const auto base_offset = read_num(*stream);*/
-								stream->skip(sizeof(leaf_data) + 4);
-								read_num(*stream);
-								break;
-							}
-							case 0x1502: // LF_ENUMERATE
-							{
-								/*const auto attributes = stream->read<leaf_data>();
-								const auto value = read_num(*stream);
-								const auto text_value = stream->read<std::string>();*/
-								stream->skip(sizeof(leaf_data));
-								read_num(*stream);
-								stream->read<std::string>();
-								break;
-							}
-							case 0x150C: // LF_FRIENDFCN
-							{
-								/*stream->skip(2);
-								const auto function_type_index = stream->read<uint32_t>();
-								const auto name = stream->read<std::string>();*/
-								stream->skip(6);
-								stream->read<std::string>();
-								break;
-							}
-							case 0x150D: // LF_MEMBER
-							{
-								/*const auto attributes = stream->read<leaf_data>();
-								const auto type_index = stream->read<uint32_t>();
-								const auto field_offset = read_num(*stream);
-								const auto name = stream->read<std::string>();*/
-								stream->skip(sizeof(leaf_data) + 4);
-								read_num(*stream);
-								stream->read<std::string>();
-								break;
-							}
-							case 0x150E: // LF_STMEMBER (static member field)
-							{
-								/*const auto attributes = stream->read<leaf_data>();
-								const auto type_index = stream->read<uint32_t>();
-								const auto name = stream->read<std::string>();*/
-								stream->skip(sizeof(leaf_data) + 4);
-								stream->read<std::string>();
-								break;
-							}
-							case 0x1511: // LF_ONEMETHOD (single method)
-							{
-								bool introducing = false;
-								const auto attributes = stream->read<leaf_data>();
-								const auto function_type_index = stream->read<uint32_t>();
-								auto &typereference = types.resolve(function_type_index);
-								std::string mangled_name = typereference.mangled_name;
-								//const auto access_pos = typereference.mangled_name.find("[ACCESSPLACEHOLDER]");
-
-								// TODO: class_type_index is not necessarily valid for static functions (since the type can be reused for different classes)
-								//const auto class_type = types.resolve(info.class_type_index);
-
-								//if (!class_type.mangled_name.empty())
-								//mangled_name += class_type.mangled_name.substr(1);
-
-								switch (attributes.access | attributes.method_type << 2)
-								{
-									case 0x0D: // private friend method
-									case 0x01: // private vanilla method
-										mangled_name.insert(0, 1, 'A');
-										break;
-									case 0x11: // private introducing virtual method
-									case 0x19: // private pure introducing virtual method
-										introducing = true;
-									case 0x05: // private virtual method
-									case 0x15: // private pure virtual method
-										mangled_name.insert(0, 1, 'E');
-										break;
-									case 0x09: // private static method
-										typereference.mangled_name.insert(0, 1, 'C');
-										break;
-									case 0x0E: // protected friend method
-									case 0x02: // protected vanilla method
-										mangled_name.insert(0, 1, 'I');
-										break;
-									case 0x12: // protected introducing virtual method
-									case 0x1A: // protected pure introducing virtual method
-										introducing = true;
-									case 0x06: // protected virtual method
-									case 0x16: // protected pure virtual method
-										mangled_name.insert(0, 1, 'M');
-										break;
-									case 0x0A: // protected static method
-										mangled_name.insert(0, 1, 'K');
-										break;
-									case 0x0F: // public friend method
-									case 0x03: // public vanilla method
-										mangled_name.insert(0, 1, 'Q');
-										break;
-									case 0x13: // public introducing virtual method
-									case 0x1B: // public pure introducing virtual method
-										introducing = true;
-									case 0x07: // public virtual method
-									case 0x17: // public pure virtual method
-										mangled_name.insert(0, 1, 'U');
-										break;
-									case 0x0B: // public static method
-										mangled_name.insert(0, 1, 'S');
-										break;
-									default:
-										__debugbreak();
-								}
-
-								if (introducing)
-								{
-									stream->skip(4); // skip virtual table offset
-								}
-
-								const auto name = stream->read<std::string>();
-								break;
-							}
-							case 0x150f: // LF_METHOD (overloaded method)
-							{
-								/*const auto overload_count = stream->read<uint16_t>();
-								const auto method_list_type_index = stream->read<uint32_t>();
-								const auto name = stream->read<std::string>();*/
-								stream->skip(6);
-								stream->read<std::string>();
-								break;
-							}
-							case 0x1510: // LF_NESTTYPE (nested/scoped type definition)
-							case 0x1512: // LF_NESTTYPEEX
-							{
-								/*const auto attributes = stream->read<leaf_data>();
-								const auto type_index = stream->read<uint32_t>();
-								const auto name = stream->read<std::string>();*/
-								stream->skip(sizeof(leaf_data) + 4);
-								stream->read<std::string>();
-								break;
-							}
-						}
-
-						stream->align(4);
-					}
-					break;
-				}
-				case 0x1206: // LF_METHODLIST
-				{
-					struct leaf_data
-					{
-						uint16_t access : 2;
-						uint16_t method_type : 3;
-						uint16_t is_compiler_generated_pseudo : 1;
-						uint16_t is_not_inheritable : 1;
-						uint16_t is_not_constructable : 1;
-						uint16_t is_compiler_generated : 1;
-						uint16_t is_sealed : 1;
-						uint16_t reserved : 6;
-						uint16_t padding;
-						uint32_t function_type_index;
-					};
-
-					while (stream->tell() < next_record_offset)
-					{
-						bool introducing = false;
-						const auto info = stream->read<leaf_data>();
-						auto &typereference = types.resolve(info.function_type_index);
-						std::string mangled_name = typereference.mangled_name;
-
-						switch (info.access | info.method_type << 2)
-						{
-							case 0x0D: // private friend method
-							case 0x01: // private vanilla method
-								mangled_name.insert(0, 1, 'A');
-								break;
-							case 0x11: // private introducing virtual method
-							case 0x19: // private pure introducing virtual method
-								introducing = true;
-							case 0x05: // private virtual method
-							case 0x15: // private pure virtual method
-								mangled_name.insert(0, 1, 'E');
-								break;
-							case 0x09: // private static method
-								mangled_name.insert(0, 1, 'C');
-								break;
-							case 0x0E: // protected friend method
-							case 0x02: // protected vanilla method
-								mangled_name.insert(0, 1, 'I');
-								break;
-							case 0x12: // protected introducing virtual method
-							case 0x1A: // protected pure introducing virtual method
-								introducing = true;
-							case 0x06: // protected virtual method
-							case 0x16: // protected pure virtual method
-								mangled_name.insert(0, 1, 'M');
-								break;
-							case 0x0A: // protected static method
-								mangled_name.insert(0, 1, 'K');
-								break;
-							case 0x0F: // public friend method
-							case 0x03: // public vanilla method
-								mangled_name.insert(0, 1, 'Q');
-								break;
-							case 0x13: // public introducing virtual method
-							case 0x1B: // public pure introducing virtual method
-								introducing = true;
-							case 0x07: // public virtual method
-							case 0x17: // public pure virtual method
-								mangled_name.insert(0, 1, 'U');
-								break;
-							case 0x0B: // public static method
-								mangled_name.insert(0, 1, 'S');
-								break;
-							default:
-								__debugbreak();
-						}
-
-						if (introducing)
-						{
-							stream->skip(4); // skip virtual table offset
-						}
-					}
+					types[current_index] = { std::move(mangled_name), argument_size, 0, false, false, false, false, false, false, false, false };
 					break;
 				}
 				case 0x1503: // LF_ARRAY
@@ -867,7 +625,7 @@ namespace jetlink
 
 					const auto info = stream->read<leaf_type>();
 					const auto actual_size = read_num(*stream);
-					auto element_type = types.resolve(info.element_type_index);
+					auto element_type = types[info.element_type_index];
 					std::string mangled_name;
 
 					mangled_name += 'Y';
@@ -893,7 +651,7 @@ namespace jetlink
 
 					mangled_name += element_type.mangled_name;
 
-					types.insert({ current_index, info.element_type_index, std::move(mangled_name), actual_size, false, false, false, false, true, false, false, (element_type.is_forward_reference != 0) });
+					types[current_index] = { std::move(mangled_name), actual_size, info.element_type_index, false, false, false, false, true, false, false, (element_type.is_forward_reference != 0) };
 					break;
 				}
 				case 0x1504: // LF_CLASS
@@ -939,7 +697,7 @@ namespace jetlink
 						mangled_name.insert(0, 1, static_cast<char>('T' + (0x1506 - tag))) += "@@";
 					}
 
-					types.insert({ current_index, 0, std::move(mangled_name), actual_size, false, false, false, false, false, false, false, (info.is_forward_reference != 0) });
+					types[current_index] = { std::move(mangled_name), actual_size, 0, false, false, false, false, false, false, false, (info.is_forward_reference != 0) };
 					break;
 				}
 				case 0x1507: // LF_ENUM
@@ -977,7 +735,7 @@ namespace jetlink
 						mangled_name.insert(0, "W4", 2) += "@@";
 					}
 
-					types.insert({ current_index, info.base_type_index, std::move(mangled_name), types.resolve(info.base_type_index).size, false, false, false, false, false, false, false, (info.is_forward_reference != 0) });
+					types[current_index] = { std::move(mangled_name), types[info.base_type_index].size, info.base_type_index, false, false, false, false, false, false, false, (info.is_forward_reference != 0) };
 					break;
 				}
 			}
@@ -1003,7 +761,6 @@ namespace jetlink
 
 		if (dbiheader.signature != 0xFFFFFFFF)
 		{
-			// Program debug database file does not contain any valid debug info
 			return { };
 		}
 
@@ -1052,7 +809,7 @@ namespace jetlink
 					const auto info = stream->read<leaf_data>();
 					const auto mangled_name = stream->read<std::string>();
 
-					if (info.segment > sections.size())
+					if (info.segment == 0 || info.segment > sections.size())
 					{
 						symbols[mangled_name] = 0;
 					}

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "jetlink_symbols.hpp"
 #include "jetlink_reader_msf.hpp"
 
 #include <unordered_map>
@@ -25,6 +24,17 @@ namespace jetlink
 		{
 			return !operator==(other);
 		}
+	};
+
+	/// <summary>
+	/// Information about a type (both built-in and user-defined).
+	/// </summary>
+	struct type
+	{
+		std::string mangled_name;
+		size_t size;
+		unsigned int base_type_index;
+		unsigned char is_builtin : 1, is_const : 1, is_volatile : 1, is_unaligned : 1, is_array : 1, is_pointer : 1, is_function : 1, is_forward_reference : 1;
 	};
 
 	/// <summary>
@@ -88,7 +98,7 @@ namespace jetlink
 		/// <summary>
 		/// Walks through all types in this PDB file and returns them.
 		/// </summary>
-		type_table types();
+		std::vector<type> types();
 		/// <summary>
 		/// Walks through all symbols in this PDB file and returns them.
 		/// </summary>

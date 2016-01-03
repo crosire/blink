@@ -11,7 +11,6 @@
   <ItemGroup>
     <ClInclude Include="source\jetlink_reader_msf.hpp" />
     <ClInclude Include="source\jetlink_reader_pdb.hpp" />
-    <ClInclude Include="source\jetlink_symbols.hpp" />
     <ClInclude Include="source\filewatcher.hpp" />
     <ClInclude Include="source\jetlink.hpp" />
   </ItemGroup>

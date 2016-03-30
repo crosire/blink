@@ -144,6 +144,11 @@ namespace jetlink
 		const auto page_index = (_stream_offset) / _reader->_header.page_size;
 		const auto page_index_last = (_stream_offset + size) / _reader->_header.page_size;
 
+		if (page_index >= _reader->_streams[_stream_index].page_indices.size())
+		{
+			return false;
+		}
+
 		_reader->_file.seekg(_reader->_streams[_stream_index].page_indices[page_index] * _reader->_header.page_size + _stream_offset % _reader->_header.page_size);
 
 		if (page_index != page_index_last)

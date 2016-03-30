@@ -6,6 +6,35 @@
 #include <algorithm>
 #include <Windows.h>
 
+typedef struct _UNICODE_STRING
+{
+	USHORT Length;
+	USHORT MaximumLength;
+	_Field_size_bytes_part_(MaximumLength, Length) PWCH Buffer;
+} UNICODE_STRING;
+typedef UNICODE_STRING *PUNICODE_STRING;
+typedef struct _OBJECT_ATTRIBUTES
+{
+	ULONG Length;
+	HANDLE RootDirectory;
+	PUNICODE_STRING ObjectName;
+	ULONG Attributes;
+	PVOID SecurityDescriptor;        // Points to type SECURITY_DESCRIPTOR
+	PVOID SecurityQualityOfService;  // Points to type SECURITY_QUALITY_OF_SERVICE
+} OBJECT_ATTRIBUTES;
+typedef OBJECT_ATTRIBUTES *POBJECT_ATTRIBUTES;
+typedef CONST OBJECT_ATTRIBUTES *PCOBJECT_ATTRIBUTES;
+typedef enum _SECTION_INHERIT
+{
+	ViewShare = 1,
+	ViewUnmap = 2
+} SECTION_INHERIT, *PSECTION_INHERIT;
+
+typedef NTSTATUS (NTAPI *tNtCreateSection)(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PLARGE_INTEGER MaximumSize, ULONG PageAttributess, ULONG SectionAttributes, HANDLE FileHandle);
+typedef NTSTATUS (NTAPI *tNtMapViewOfSection)(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize, PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, SECTION_INHERIT InheritDisposition, ULONG AllocationType, ULONG Protect);
+typedef NTSTATUS (NTAPI *tNtUnmapViewOfSection)(HANDLE ProcessHandle, PVOID BaseAddress);
+typedef NTSTATUS (NTAPI *tNtClose)(HANDLE Handle);
+
 namespace jetlink
 {
 	namespace
@@ -53,7 +82,7 @@ namespace jetlink
 
 			while (address < maxaddress)
 			{
-				if (VirtualQuery(address, &meminfo, sizeof(MEMORY_BASIC_INFORMATION)) == 0)
+				if (VirtualQuery(address, &meminfo, sizeof(meminfo)) == 0)
 				{
 					break;
 				}
@@ -72,92 +101,213 @@ namespace jetlink
 #endif
 			return nullptr;
 		}
-		size_t additional_data_size(HANDLE file)
+		DWORD round_to_multiple(DWORD value, DWORD multiple)
 		{
-			DWORD read = 0;
-			IMAGE_FILE_HEADER header;
-			size_t size = sizeof(IMAGE_FILE_HEADER);
-
-			if (!ReadFile(file, &header, size, &read, nullptr) || read != static_cast<DWORD>(size))
-			{
-				SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-				return 0;
-			}
-
-			SetFilePointer(file, header.SizeOfOptionalHeader, nullptr, FILE_CURRENT);
-
-			size = header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER);
-			const auto sections = static_cast<IMAGE_SECTION_HEADER *>(alloca(size));
-
-			if (!ReadFile(file, sections, size, &read, nullptr) || read != static_cast<DWORD>(size))
-			{
-				SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-				return 0;
-			}
-
-			SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-
-			size = 0;
-
-			for (unsigned int i = 0; i < header.NumberOfSections; i++)
-			{
-				if (sections[i].PointerToRawData == 0 && sections[i].Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
-				{
-					size += sections[i].SizeOfRawData;
-				}
-#ifdef _M_AMD64
-				else if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
-				{
-					size += sections[i].NumberOfRelocations * 12;
-				}
-#endif
-			}
-
-			return size;
+			return ((value + multiple - 1) / multiple) * multiple;
 		}
 	}
 
 	bool application::link(const std::string &path)
 	{
-		const HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		// Open object file
+		const HANDLE objectfile = CreateFileA(path.c_str(), FILE_GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
-		if (file == INVALID_HANDLE_VALUE)
+		if (objectfile == INVALID_HANDLE_VALUE)
 		{
 			print("JETLINK: Failed to open input file.\n");
 
 			return false;
 		}
 
-		DWORD modulesize = GetFileSize(file, nullptr), modulesize_read = 0;
-		const size_t allocsize = modulesize + additional_data_size(file);
+		const auto objectsize = GetFileSize(objectfile, nullptr);
+
+		// Create temporary module file for mapping
+		//const HANDLE modulefile = CreateFileA("jetlink_temp.dll", FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_EXECUTE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE | FILE_FLAG_RANDOM_ACCESS, nullptr);
+		const HANDLE modulefile = CreateFileA(path.c_str(), FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_EXECUTE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
+
+		if (modulefile == INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(objectfile);
+
+			print("JETLINK: Failed to create temporary module file.\n");
+
+			return false;
+		}
+
+		// Write PE headers to module file
+		DWORD written = 0;
+		IMAGE_DOS_HEADER stub_dll_header1 = { };
+		stub_dll_header1.e_magic = IMAGE_DOS_SIGNATURE;
+		stub_dll_header1.e_lfanew = sizeof(stub_dll_header1);
+		IMAGE_NT_HEADERS stub_dll_header2 = { };
+		stub_dll_header2.Signature = IMAGE_NT_SIGNATURE;
+		ReadFile(objectfile, &stub_dll_header2.FileHeader, sizeof(stub_dll_header2.FileHeader), &written, nullptr);
+		const auto num_sections = stub_dll_header2.FileHeader.NumberOfSections;
+		stub_dll_header2.FileHeader.NumberOfSections = 1;
+		stub_dll_header2.FileHeader.SizeOfOptionalHeader = sizeof(stub_dll_header2.OptionalHeader);
+		stub_dll_header2.FileHeader.Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE | IMAGE_FILE_DLL | IMAGE_FILE_RELOCS_STRIPPED;
+		stub_dll_header2.OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR_MAGIC;
+		stub_dll_header2.OptionalHeader.SizeOfCode = 0;
+		stub_dll_header2.OptionalHeader.SizeOfInitializedData = 512;
+		stub_dll_header2.OptionalHeader.SizeOfUninitializedData = 0;
+		stub_dll_header2.OptionalHeader.AddressOfEntryPoint = 0;
+		stub_dll_header2.OptionalHeader.BaseOfCode = 0;
+#ifdef _M_IX86
+		stub_dll_header2.OptionalHeader.BaseOfData = 0;
+#endif
+		stub_dll_header2.OptionalHeader.ImageBase = 0x80000000;
+		stub_dll_header2.OptionalHeader.SectionAlignment = 4096;
+		stub_dll_header2.OptionalHeader.FileAlignment = 512;
+		stub_dll_header2.OptionalHeader.MajorOperatingSystemVersion = stub_dll_header2.OptionalHeader.MajorSubsystemVersion = 6;
+		stub_dll_header2.OptionalHeader.MinorOperatingSystemVersion = stub_dll_header2.OptionalHeader.MinorSubsystemVersion = 0;
+		stub_dll_header2.OptionalHeader.SizeOfImage = 8192;// round_to_multiple(sizeof(stub_dll_header1) + sizeof(stub_dll_header2), stub_dll_header2.OptionalHeader.SectionAlignment);
+		stub_dll_header2.OptionalHeader.SizeOfHeaders = round_to_multiple(sizeof(stub_dll_header1) + sizeof(stub_dll_header2), stub_dll_header2.OptionalHeader.FileAlignment);
+		stub_dll_header2.OptionalHeader.Subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
+		stub_dll_header2.OptionalHeader.DllCharacteristics = IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA;
+		stub_dll_header2.OptionalHeader.SizeOfStackReserve = 0x100000;
+		stub_dll_header2.OptionalHeader.SizeOfStackCommit = 0x1000;
+		stub_dll_header2.OptionalHeader.SizeOfHeapReserve = 0x100000;
+		stub_dll_header2.OptionalHeader.SizeOfHeapCommit = 0x1000;
+		stub_dll_header2.OptionalHeader.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+
+		IMAGE_SECTION_HEADER stub_dll_section1 = { };
+		stub_dll_section1.Name[0] = '.', stub_dll_section1.Name[1] = 'r', stub_dll_section1.Name[2] = 'd', stub_dll_section1.Name[3] = 'a', stub_dll_section1.Name[4] = 't', stub_dll_section1.Name[5] = 'a';
+		stub_dll_section1.Misc.PhysicalAddress = 0x64;
+		stub_dll_section1.VirtualAddress = stub_dll_header2.OptionalHeader.SectionAlignment;
+		stub_dll_section1.SizeOfRawData = round_to_multiple(objectsize, stub_dll_header2.OptionalHeader.FileAlignment);
+		stub_dll_section1.PointerToRawData = stub_dll_header2.OptionalHeader.BaseOfCode = stub_dll_header2.OptionalHeader.SizeOfHeaders;
+		stub_dll_section1.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_EXECUTE;
+
+		std::vector<IMAGE_DEBUG_DIRECTORY> debug_directory = { };
+
+		stub_dll_header2.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress = sizeof(stub_dll_header1) + sizeof(stub_dll_header2) + sizeof(stub_dll_section1) + num_sections * sizeof(IMAGE_SECTION_HEADER);
+		stub_dll_header2.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size = 0;
+
+		WriteFile(modulefile, &stub_dll_header1, sizeof(stub_dll_header1), &written, nullptr);
+		WriteFile(modulefile, &stub_dll_header2, sizeof(stub_dll_header2), &written, nullptr);
+		WriteFile(modulefile, &stub_dll_section1, sizeof(stub_dll_section1), &written, nullptr);
+
+		// Write section headers
+		size_t uninitialized_data_size = 0, additional_data_size = 0;
+
+		for (DWORD i = num_sections, readwrite; i > 0; i--)
+		{
+			IMAGE_SECTION_HEADER section;
+
+			if (!ReadFile(objectfile, &section, sizeof(section), &readwrite, nullptr))
+			{
+				break;
+			}
+
+			if (section.PointerToRawData == 0 && section.Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
+			{
+				// Create uninitialized data sections
+				section.PointerToRawData = objectsize + uninitialized_data_size;
+
+				uninitialized_data_size += section.SizeOfRawData;
+			}
+#ifdef _M_AMD64
+			else if (section.Characteristics & IMAGE_SCN_CNT_CODE)
+			{
+				additional_data_size += section.NumberOfRelocations * 12;
+			}
+#endif
+			else if (strncmp(reinterpret_cast<const char *>(section.Name), ".debug", IMAGE_SIZEOF_SHORT_NAME) == 0)
+			{
+				IMAGE_DEBUG_DIRECTORY debug_entry = { };
+				debug_entry.MajorVersion = 4;
+				debug_entry.Type = IMAGE_DEBUG_TYPE_CODEVIEW;
+				debug_entry.SizeOfData = section.SizeOfRawData;
+				debug_entry.AddressOfRawData = section.PointerToRawData;
+				debug_entry.PointerToRawData = section.PointerToRawData;
+
+				debug_directory.push_back(std::move(debug_entry));
+			}
+
+			// Executables do not support long section names
+			assert(section.Name[0] != '/');
+
+			section.Misc.VirtualSize = section.SizeOfRawData;
+
+			// Fix up file offsets
+			if (section.PointerToRawData != 0)
+			{
+				section.PointerToRawData += sizeof(stub_dll_header1) + 4 + stub_dll_header2.FileHeader.SizeOfOptionalHeader;
+			}
+			if (section.PointerToRelocations != 0)
+			{
+				section.PointerToRelocations += sizeof(stub_dll_header1) + 4 + stub_dll_header2.FileHeader.SizeOfOptionalHeader;
+			}
+			if (section.PointerToLinenumbers != 0)
+			{
+				section.PointerToLinenumbers += sizeof(stub_dll_header1) + 4 + stub_dll_header2.FileHeader.SizeOfOptionalHeader;
+			}
+
+			section.VirtualAddress = section.PointerToRawData;
+
+			if (!WriteFile(modulefile, &section, sizeof(section), &readwrite, nullptr))
+			{
+				break;
+			}
+		}
+
+		// Write section contents
+		BYTE buffer[512];
+		DWORD readwrite = 0;
+		while (ReadFile(objectfile, buffer, sizeof(buffer), &readwrite, nullptr) && readwrite != 0)
+		{
+			WriteFile(modulefile, buffer, readwrite, &readwrite, nullptr);
+		}
+
+		// Write debug directory
+		for (const auto &debug_entry : debug_directory)
+		{
+			WriteFile(modulefile, &debug_entry, sizeof(debug_entry), &readwrite, nullptr);
+		}
+
+		// Allocate additional data
+		for (size_t i = 0; i < uninitialized_data_size + additional_data_size; i++)
+		{
+			DWORD a = 0;
+			WriteFile(modulefile, &a, 1, &a, nullptr);
+		}
+
+		// Close object file
+		//CloseHandle(objectfile);
+
+		// Create module file mapping
+		//const HANDLE filemapping = CreateFileMappingA(modulefile, nullptr, SEC_IMAGE | PAGE_EXECUTE_READWRITE, 0, 0, nullptr);
+		const HANDLE filemapping = CreateFileMappingA(modulefile, nullptr, PAGE_EXECUTE_READWRITE, 0, 0, nullptr);
+
+		if (filemapping == nullptr)
+		{
+			CloseHandle(modulefile);
+
+			print("JETLINK: Failed to create temporary module file mapping.\n");
+
+			return false;
+		}
 
 		// Allocate executable memory region close to the executable image base.
 		// Successfully loaded object files are never deallocated again to avoid corrupting the function rerouting generated below.
 		// The virtual memory is freed at process exit by Windows.
-		const auto modulebase = static_cast<uint8_t *>(VirtualAlloc(find_free_memory_region(_imagebase, allocsize), allocsize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+		//const auto modulebase = static_cast<uint8_t *>(VirtualAlloc(find_free_memory_region(_imagebase, allocsize), allocsize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+		// MapViewOfFileEx calls NtMapViewOfSection under the hood, which calls the debug LoadImageNotifyRoutine callback
+		const auto modulebase = static_cast<uint8_t *>(MapViewOfFileEx(filemapping, FILE_MAP_READ | FILE_MAP_WRITE | FILE_MAP_EXECUTE, 0, 0, 0, nullptr));
+		const auto modulesize = GetFileSize(modulefile, nullptr);
+
+		CloseHandle(filemapping);
 
 		if (modulebase == nullptr)
 		{
-			CloseHandle(file);
+			CloseHandle(modulefile);
 
 			print("JETLINK: Failed to allocate executable memory region.\n");
 
 			return false;
 		}
 
-		// Read object file into memory region
-		ReadFile(file, modulebase, modulesize, &modulesize_read, nullptr);
-		CloseHandle(file);
-
-		if (modulesize_read < modulesize)
-		{
-			VirtualFree(modulebase, modulesize, MEM_RELEASE);
-
-			print("JETLINK: Failed to read data from input file.\n");
-
-			return false;
-		}
-
+		//const auto &moduleheader = *reinterpret_cast<const IMAGE_FILE_HEADER *>(modulebase + reinterpret_cast<const IMAGE_DOS_HEADER *>(modulebase)->e_lfanew + 4);
 		const auto &moduleheader = *reinterpret_cast<const IMAGE_FILE_HEADER *>(modulebase);
 
 #ifdef _M_IX86
@@ -167,34 +317,19 @@ namespace jetlink
 		if (moduleheader.Machine != IMAGE_FILE_MACHINE_AMD64)
 #endif
 		{
-			VirtualFree(modulebase, modulesize, MEM_RELEASE);
+			UnmapViewOfFile(modulebase);
+			CloseHandle(modulefile);
 
 			print("JETLINK: Input file is not of a valid format or was compiled for a different processor architecture.\n");
 
 			return false;
 		}
 
-		auto additional_data_base = modulebase + modulesize;
+		auto additional_data_base = modulebase + modulesize;// -additional_data_size;
 		const auto symbol_table_base = reinterpret_cast<const IMAGE_SYMBOL *>(modulebase + moduleheader.PointerToSymbolTable);
 		const auto section_header_base = reinterpret_cast<IMAGE_SECTION_HEADER *>(modulebase + sizeof(IMAGE_FILE_HEADER) + moduleheader.SizeOfOptionalHeader);
 		std::vector<uint8_t *> local_symbol_addresses(moduleheader.NumberOfSymbols);
 		std::vector<std::pair<uint8_t *, const uint8_t *>> image_function_relocations;
-
-		// Allocate uninitialized data sections
-		for (unsigned int i = 0; i < moduleheader.NumberOfSections; i++)
-		{
-			IMAGE_SECTION_HEADER &section = section_header_base[i];
-
-			if (section.PointerToRawData == 0 && section.Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
-			{
-				assert(additional_data_base + section.SizeOfRawData <= modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
-
-				// Memory was already initialized to zero by VirtualAlloc
-				section.PointerToRawData = static_cast<DWORD>(additional_data_base - modulebase);
-
-				additional_data_base += section.SizeOfRawData;
-			}
-		}
 
 		// Resolve internal and external symbols
 		for (unsigned int i = 0; i < moduleheader.NumberOfSymbols; i++)
@@ -208,7 +343,8 @@ namespace jetlink
 			{
 				if (symbol_table_lookup == _symbols.end())
 				{
-					VirtualFree(modulebase, modulesize, MEM_RELEASE);
+					UnmapViewOfFile(modulebase);
+					CloseHandle(modulefile);
 
 					print("JETLINK: Unresolved external symbol '" + symbol_name + "'.\n");
 
@@ -233,7 +369,8 @@ namespace jetlink
 				}
 				else
 				{
-					VirtualFree(modulebase, modulesize, MEM_RELEASE);
+					UnmapViewOfFile(modulebase);
+					CloseHandle(modulefile);
 
 					print("JETLINK: Unresolved weak external symbol '" + symbol_name + "'.\n");
 
@@ -288,7 +425,7 @@ namespace jetlink
 				// Add relay thunk if distance to target exceeds 32 bit range
 				if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbol_table_base[relocation.SymbolTableIndex].Type))
 				{
-					assert(additional_data_base + 12 < modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
+					//assert(additional_data_base + 12 < modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
 
 					write_jump(additional_data_base, target_address);
 

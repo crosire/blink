@@ -5,6 +5,7 @@
 #include <fstream>
 #include <algorithm>
 #include <Windows.h>
+#include <TlHelp32.h>
 
 namespace jetlink
 {
@@ -74,11 +75,10 @@ namespace jetlink
 		}
 		size_t additional_data_size(HANDLE file)
 		{
-			DWORD read = 0;
 			IMAGE_FILE_HEADER header;
-			size_t size = sizeof(IMAGE_FILE_HEADER);
+			DWORD read = 0, size = sizeof(header);
 
-			if (!ReadFile(file, &header, size, &read, nullptr) || read != static_cast<DWORD>(size))
+			if (!ReadFile(file, &header, size, &read, nullptr) || read != size)
 			{
 				SetFilePointer(file, 0, nullptr, FILE_BEGIN);
 				return 0;
@@ -89,7 +89,7 @@ namespace jetlink
 			size = header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER);
 			const auto sections = static_cast<IMAGE_SECTION_HEADER *>(alloca(size));
 
-			if (!ReadFile(file, sections, size, &read, nullptr) || read != static_cast<DWORD>(size))
+			if (!ReadFile(file, sections, size, &read, nullptr) || read != size)
 			{
 				SetFilePointer(file, 0, nullptr, FILE_BEGIN);
 				return 0;
@@ -115,10 +115,89 @@ namespace jetlink
 
 			return size;
 		}
+
+		void resume_all_threads()
+		{
+			const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+
+			if (snapshot == INVALID_HANDLE_VALUE)
+			{
+				return;
+			}
+
+			THREADENTRY32 te = { sizeof(te) };
+
+			if (Thread32First(snapshot, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
+			{
+				do
+				{
+					if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId())
+					{
+						continue;
+					}
+
+					const auto thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+
+					if (thread == nullptr)
+					{
+						continue;
+					}
+
+					ResumeThread(thread);
+					CloseHandle(thread);
+				}
+				while (Thread32Next(snapshot, &te));
+			}
+
+			CloseHandle(snapshot);
+		}
+		void suspend_all_threads()
+		{
+			CreateThread(nullptr, 0, [](LPVOID) -> DWORD { while (true) { print("X"); Sleep(100); } return 0; }, nullptr, 0, nullptr);
+
+			const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+
+			if (snapshot == INVALID_HANDLE_VALUE)
+			{
+				return;
+			}
+
+			THREADENTRY32 te = { sizeof(te) };
+
+			if (Thread32First(snapshot, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
+			{
+				do
+				{
+					if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId())
+					{
+						continue;
+					}
+
+					const auto thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+
+					if (thread == nullptr)
+					{
+						continue;
+					}
+
+					SuspendThread(thread);
+					CloseHandle(thread);
+				}
+				while (Thread32Next(snapshot, &te));
+			}
+
+			CloseHandle(snapshot);
+		}
 	}
 
 	bool application::link(const std::string &path)
 	{
+		struct scope_guard
+		{
+			scope_guard() { suspend_all_threads(); }
+			~scope_guard() { resume_all_threads(); }
+		} _scope_guard_;
+
 		const HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
 		if (file == INVALID_HANDLE_VALUE)

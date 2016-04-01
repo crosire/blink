@@ -83,13 +83,13 @@ namespace jetlink
 		/// Gets a named content stream.
 		/// </summary>
 		/// <param name="name">The name of the stream.</param>
-		std::unique_ptr<msf_stream_reader> stream(const std::string &name)
+		std::vector<char> stream(const std::string &name)
 		{
 			const auto it = _named_streams.find(name);
 
 			if (it == _named_streams.end())
 			{
-				return nullptr;
+				return { };
 			}
 
 			return msf_reader::stream(it->second);

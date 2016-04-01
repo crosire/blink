@@ -196,33 +196,37 @@ namespace jetlink
 
 	pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 	{
-		_is_valid = msf_reader::is_valid() && msf_reader::stream_count() > 4 && msf_reader::stream(1)->size() != 0;
-
-		if (!is_valid())
+		if (!msf_reader::is_valid() || msf_reader::stream_count() <= 4)
 		{
 			return;
 		}
 
 		// Read PDB info stream
-		auto pdbstream = msf_reader::stream(1);
-		const auto pdbheader = pdbstream->read<pdb_header>();
+		msf_stream_reader pdbstream(msf_reader::stream(1));
+
+		if (pdbstream.size() == 0)
+		{
+			return;
+		}
+
+		const auto pdbheader = pdbstream.read<pdb_header>();
 
 		_version = pdbheader.version;
 		_timestamp = pdbheader.time_date_stamp;
 		_guid = pdbheader.guid;
 
 		// Read stream names from string hash map
-		pdbstream->seek(sizeof(pdb_header) + pdbheader.names_map_offset);
-		const auto count = pdbstream->read<uint32_t>();
-		const auto hash_table_size = pdbstream->read<uint32_t>();
+		pdbstream.seek(sizeof(pdb_header) + pdbheader.names_map_offset);
+		const auto count = pdbstream.read<uint32_t>();
+		const auto hash_table_size = pdbstream.read<uint32_t>();
 
 		_named_streams.reserve(count);
 
-		const auto num_bitset_present = pdbstream->read<uint32_t>();
+		const auto num_bitset_present = pdbstream.read<uint32_t>();
 		std::vector<uint32_t> bitset_present(num_bitset_present);
-		pdbstream->read(bitset_present.data(), num_bitset_present * sizeof(uint32_t));
-		const auto num_bitset_deleted = pdbstream->read<uint32_t>();
-		pdbstream->skip(num_bitset_deleted * sizeof(uint32_t));
+		pdbstream.read(bitset_present.data(), num_bitset_present * sizeof(uint32_t));
+		const auto num_bitset_deleted = pdbstream.read<uint32_t>();
+		pdbstream.skip(num_bitset_deleted * sizeof(uint32_t));
 
 		for (unsigned int i = 0; i < hash_table_size; i++)
 		{
@@ -231,36 +235,38 @@ namespace jetlink
 				continue;
 			}
 
-			const auto name_offset = pdbstream->read<uint32_t>();
-			const auto stream_index = pdbstream->read<uint32_t>();
+			const auto name_offset = pdbstream.read<uint32_t>();
+			const auto stream_index = pdbstream.read<uint32_t>();
 
-			const auto oldpos = pdbstream->tell();
-			pdbstream->seek(sizeof(pdb_header) + name_offset);
-			const auto name = pdbstream->read<std::string>();
-			pdbstream->seek(oldpos);
+			const auto oldpos = pdbstream.tell();
+			pdbstream.seek(sizeof(pdb_header) + name_offset);
+			const auto name = pdbstream.read<std::string>();
+			pdbstream.seek(oldpos);
 
 			_named_streams.insert({ name, stream_index });
 		}
+
+		_is_valid = true;
 	}
 
 	std::vector<type> pdb_reader::types()
 	{
-		if (!is_valid())
+		if (!is_valid() || stream_count() <= 2)
 		{
 			return { };
 		}
 
 		// Read type info (TPI stream)
-		const auto stream = msf_reader::stream(2);
-		const auto header = stream->read<pdb_tpi_header>();
+		msf_stream_reader stream(msf_reader::stream(2));
+		const auto header = stream.read<pdb_tpi_header>();
 
-		if (header.header_size + header.content_size != stream->size())
+		if (header.header_size + header.content_size != stream.size())
 		{
 			return { };
 		}
 
 		// Skip any additional bytes that were appended to the header
-		stream->seek(header.header_size);
+		stream.seek(header.header_size);
 
 		// Create type table
 		std::vector<type> types(header.max_index, { 0 });
@@ -334,11 +340,11 @@ namespace jetlink
 		for (auto current_index = header.min_index; current_index < header.max_index; current_index++)
 		{
 			// Each records starts with 2 bytes containing the size of the record after this element
-			const auto size = stream->read<uint16_t>();
+			const auto size = stream.read<uint16_t>();
 			// Next 2 bytes contain an enumeration depicting the type and format of the following data
-			const auto tag = stream->read<uint16_t>();
+			const auto tag = stream.read<uint16_t>();
 			// The next record is found by adding the current record size to the position of the previous size element
-			const auto next_record_offset = (stream->tell() - sizeof(uint16_t)) + size;
+			const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
 
 			switch (tag)
 			{
@@ -353,7 +359,7 @@ namespace jetlink
 						uint16_t reserved : 13;
 					};
 
-					const auto info = stream->read<leaf_data>();
+					const auto info = stream.read<leaf_data>();
 					const auto basetype = types[info.base_type_index];
 
 					types[current_index] = { basetype.mangled_name, basetype.size, info.base_type_index, false, (info.is_const != 0), (info.is_volatile != 0), (info.is_unaligned != 0), false, false, false, (basetype.is_forward_reference != 0) };
@@ -378,7 +384,7 @@ namespace jetlink
 						uint32_t reserved : 10;
 					};
 
-					const auto info = stream->read<leaf_data>();
+					const auto info = stream.read<leaf_data>();
 					auto basetype = types[info.base_type_index];
 					std::string mangled_name;
 
@@ -443,7 +449,7 @@ namespace jetlink
 						uint32_t arg_list_type_index;
 					};
 
-					const auto info = stream->read<leaf_data>();
+					const auto info = stream.read<leaf_data>();
 					const auto return_type = types[info.return_type_index];
 					const auto arg_list_type = types[info.arg_list_type_index];
 					std::string mangled_name;
@@ -508,7 +514,7 @@ namespace jetlink
 						int32_t this_adjust_offset;
 					};
 
-					const auto info = stream->read<leaf_data>();
+					const auto info = stream.read<leaf_data>();
 					const auto return_type = types[info.return_type_index];
 					const auto arg_list_type = types[info.arg_list_type_index];
 					std::string mangled_name;
@@ -577,14 +583,14 @@ namespace jetlink
 				}
 				case 0x1201: // LF_ARGLIST
 				{
-					const auto count = stream->read<uint32_t>();
+					const auto count = stream.read<uint32_t>();
 					bool is_variadic = false;
 					size_t argument_size = 0;
 					std::string mangled_name;
 
 					for (unsigned int i = 0; i < count; i++)
 					{
-						const auto type_index = stream->read<uint32_t>();
+						const auto type_index = stream.read<uint32_t>();
 
 						if (type_index == 0)
 						{
@@ -624,8 +630,8 @@ namespace jetlink
 						uint32_t indexing_type_index;
 					};
 
-					const auto info = stream->read<leaf_type>();
-					const auto actual_size = read_num(*stream);
+					const auto info = stream.read<leaf_type>();
+					const auto actual_size = read_num(stream);
 					auto element_type = types[info.element_type_index];
 					std::string mangled_name;
 
@@ -679,19 +685,19 @@ namespace jetlink
 						uint32_t field_descriptor_type_index;
 					};
 
-					const auto info = stream->read<leaf_data>();
+					const auto info = stream.read<leaf_data>();
 
 					if (tag != 0x1506)
 					{
-						stream->skip(8); // skip derived and virtual function table shape type index
+						stream.skip(8); // skip derived and virtual function table shape type index
 					}
 
-					const auto actual_size = read_num(*stream);
-					std::string mangled_name = stream->read<std::string>();
+					const auto actual_size = read_num(stream);
+					std::string mangled_name = stream.read<std::string>();
 
 					if (info.has_unique_name)
 					{
-						mangled_name.swap(stream->read<std::string>().erase(0, 3));
+						mangled_name.swap(stream.read<std::string>().erase(0, 3));
 					}
 					else
 					{
@@ -724,12 +730,12 @@ namespace jetlink
 						uint32_t field_descriptor_type_index;
 					};
 
-					const auto info = stream->read<leaf_data>();
-					std::string mangled_name = stream->read<std::string>();
+					const auto info = stream.read<leaf_data>();
+					std::string mangled_name = stream.read<std::string>();
 
 					if (info.has_unique_name)
 					{
-						mangled_name.swap(stream->read<std::string>().erase(0, 3));
+						mangled_name.swap(stream.read<std::string>().erase(0, 3));
 					}
 					else
 					{
@@ -741,24 +747,24 @@ namespace jetlink
 				}
 			}
 
-			stream->seek(next_record_offset);
+			stream.seek(next_record_offset);
 
 			// Each element is aligned to 4-byte boundary
-			stream->align(4);
+			stream.align(4);
 		}
 
 		return types;
 	}
 	std::unordered_map<std::string, ptrdiff_t> pdb_reader::symbols()
 	{
-		if (!is_valid())
+		if (!is_valid() || stream_count() <= 3)
 		{
 			return { };
 		}
 
 		// Read debug info (DBI stream)
-		auto stream = msf_reader::stream(3);
-		const auto dbiheader = stream->read<pdb_dbi_header>();
+		msf_stream_reader stream(msf_reader::stream(3));
+		const auto dbiheader = stream.read<pdb_dbi_header>();
 
 		if (dbiheader.signature != 0xFFFFFFFF)
 		{
@@ -766,17 +772,17 @@ namespace jetlink
 		}
 
 		// Read section headers
-		stream->seek(sizeof(pdb_dbi_header) + dbiheader.module_info_size + dbiheader.section_contribution_size + dbiheader.section_map_size + dbiheader.file_info_size + dbiheader.ts_map_size + dbiheader.ec_info_size);
-		const auto dbgheader = stream->read<pdb_dbi_debug_header>();
-		const auto sectionstream = msf_reader::stream(dbgheader.section_header);
+		stream.seek(sizeof(pdb_dbi_header) + dbiheader.module_info_size + dbiheader.section_contribution_size + dbiheader.section_map_size + dbiheader.file_info_size + dbiheader.ts_map_size + dbiheader.ec_info_size);
+		const auto dbgheader = stream.read<pdb_dbi_debug_header>();
+		msf_stream_reader sectionstream(msf_reader::stream(dbgheader.section_header));
 
 		std::vector<pdb_section_header> sections;
-		sections.reserve(sectionstream->size() / sizeof(pdb_section_header));
+		sections.reserve(sectionstream.size() / sizeof(pdb_section_header));
 
-		while (sectionstream->tell() < sectionstream->size())
+		while (sectionstream.tell() < sectionstream.size())
 		{
 			// The section header stream is a tightly packed list of section header structures
-			sections.push_back(std::move(sectionstream->read<pdb_section_header>()));
+			sections.push_back(std::move(sectionstream.read<pdb_section_header>()));
 		}
 
 		// Read symbol table
@@ -784,14 +790,14 @@ namespace jetlink
 		std::unordered_map<std::string, ptrdiff_t> symbols;
 
 		// A list of records in CodeView format
-		while (stream->tell() < stream->size())
+		while (stream.tell() < stream.size())
 		{
 			// Each records starts with 2 bytes containing the size of the record after this element
-			const auto size = stream->read<uint16_t>();
+			const auto size = stream.read<uint16_t>();
 			// Next 2 bytes contain an enumeration depicting the type and format of the following data
-			const auto tag = stream->read<uint16_t>();
+			const auto tag = stream.read<uint16_t>();
 			// The next record is found by adding the current record size to the position of the previous size element
-			const auto next_record_offset = (stream->tell() - sizeof(uint16_t)) + size;
+			const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
 
 			switch (tag)
 			{
@@ -808,8 +814,8 @@ namespace jetlink
 						uint16_t segment;
 					};
 
-					const auto info = stream->read<leaf_data>();
-					const auto mangled_name = stream->read<std::string>();
+					const auto info = stream.read<leaf_data>();
+					const auto mangled_name = stream.read<std::string>();
 
 					if (info.segment == 0 || info.segment > sections.size())
 					{
@@ -823,26 +829,26 @@ namespace jetlink
 				}
 			}
 
-			stream->seek(next_record_offset);
+			stream.seek(next_record_offset);
 
 			// Each element is aligned to 4-byte boundary
-			stream->align(4);
+			stream.align(4);
 		}
 
 		return symbols;
 	}
 	std::vector<std::string> pdb_reader::sourcefiles()
 	{
-		if (!is_valid())
+		if (!is_valid() || stream_count() <= 4)
 		{
 			return { };
 		}
 
 		// Read build info
-		const auto stream = msf_reader::stream(4);
-		const auto header = stream->read<pdb_tpi_header>();
+		msf_stream_reader stream(msf_reader::stream(4));
+		const auto header = stream.read<pdb_tpi_header>();
 
-		if (header.header_size + header.content_size != stream->size())
+		if (header.header_size + header.content_size != stream.size())
 		{
 			return { };
 		}
@@ -851,27 +857,27 @@ namespace jetlink
 		std::unordered_map<unsigned int, std::string> string_table;
 
 		// Skip any additional bytes that were appended to the header
-		stream->seek(header.header_size);
+		stream.seek(header.header_size);
 
 		// A list of records in CodeView format
 		for (auto current_index = header.min_index; current_index < header.max_index; current_index++)
 		{
 			// Each records starts with 2 bytes containing the size of the record after this element
-			const auto size = stream->read<uint16_t>();
+			const auto size = stream.read<uint16_t>();
 			// Next 2 bytes contain an enumeration depicting the type and format of the following data
-			const auto tag = stream->read<uint16_t>();
+			const auto tag = stream.read<uint16_t>();
 			// The next record is found by adding the current record size to the position of the previous size element
-			const auto next_record_offset = (stream->tell() - sizeof(uint16_t)) + size;
+			const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
 
 			switch (tag)
 			{
 				case 0x1603: // LF_BUILDINFO
 				{
-					stream->skip(2);
-					const auto directory_id = stream->read<uint32_t>();
+					stream.skip(2);
+					const auto directory_id = stream.read<uint32_t>();
 					const boost::filesystem::path directory(string_table.at(directory_id));
-					stream->skip(4);
-					const auto source_file_id = stream->read<uint32_t>();
+					stream.skip(4);
+					const auto source_file_id = stream.read<uint32_t>();
 					const boost::filesystem::path source_file(string_table.at(source_file_id));
 
 					boost::system::error_code e;
@@ -885,31 +891,31 @@ namespace jetlink
 				}
 				case 0x1605: // LF_STRING_ID
 				{
-					stream->skip(4);
-					string_table[current_index] = stream->read<std::string>();
+					stream.skip(4);
+					string_table[current_index] = stream.read<std::string>();
 					break;
 				}
 			}
 
-			stream->seek(next_record_offset);
+			stream.seek(next_record_offset);
 
 			// Each element is aligned to 4-byte boundary
-			stream->align(4);
+			stream.align(4);
 		}
 
 		return std::vector<std::string>(sourcefiles.begin(), sourcefiles.end());
 	}
 	std::unordered_map<unsigned int, std::string> pdb_reader::names()
 	{
-		const auto stream = this->stream("/names");
+		msf_stream_reader stream(this->stream("/names"));
 
-		if (!is_valid() || !stream)
+		if (!is_valid() || stream.size() == 0)
 		{
 			return { };
 		}
 
 		// Read names stream
-		const auto header = stream->read<pdb_names_header>();
+		const auto header = stream.read<pdb_names_header>();
 
 		if (header.signature != 0xEFFEEFFE || header.version != 1)
 		{
@@ -917,25 +923,25 @@ namespace jetlink
 		}
 
 		// Read string hash table
-		stream->seek(sizeof(pdb_names_header) + header.names_map_offset);
-		const auto size = stream->read<uint32_t>();
+		stream.seek(sizeof(pdb_names_header) + header.names_map_offset);
+		const auto size = stream.read<uint32_t>();
 
 		std::unordered_map<unsigned int, std::string> names;
 		names.reserve(size);
 
 		for (unsigned int i = 0; i < size; i++)
 		{
-			const auto name_offset = stream->read<uint32_t>();
+			const auto name_offset = stream.read<uint32_t>();
 
 			if (name_offset == 0)
 			{
 				continue;
 			}
 
-			const auto oldpos = stream->tell();
-			stream->seek(sizeof(pdb_names_header) + name_offset);
-			const auto name = stream->read<std::string>();
-			stream->seek(oldpos);
+			const auto oldpos = stream.tell();
+			stream.seek(sizeof(pdb_names_header) + name_offset);
+			const auto name = stream.read<std::string>();
+			stream.seek(oldpos);
 
 			names.insert({ i, name });
 		}

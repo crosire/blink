@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -38,7 +37,7 @@ namespace jetlink
 		/// Gets a content stream.
 		/// </summary>
 		/// <param name="index">The index the stream is located at.</param>
-		std::unique_ptr<class msf_stream_reader> stream(size_t index);
+		std::vector<char> stream(size_t index);
 
 	private:
 		struct file_header
@@ -66,10 +65,8 @@ namespace jetlink
 	/// </summary>
 	class msf_stream_reader
 	{
-		msf_stream_reader(const msf_stream_reader &) = delete;
-		msf_stream_reader &operator=(const msf_stream_reader &) = delete;
-
 	public:
+		msf_stream_reader(const std::vector<char> &stream);
 		msf_stream_reader(std::vector<char> &&stream);
 
 		/// <summary>

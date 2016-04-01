@@ -124,13 +124,8 @@ namespace jetlink
 		_is_valid = _file_stream.good();
 	}
 
-	std::unique_ptr<msf_stream_reader> msf_reader::stream(size_t index)
+	std::vector<char> msf_reader::stream(size_t index)
 	{
-		if (index >= stream_count())
-		{
-			return nullptr;
-		}
-
 		const auto &stream = _streams[index];
 		std::vector<char> stream_data(stream.page_indices.size() * _header.page_size);
 		size_t offset = 0;
@@ -145,9 +140,12 @@ namespace jetlink
 
 		stream_data.resize(stream.size);
 
-		return std::make_unique<msf_stream_reader>(std::move(stream_data));
+		return stream_data;
 	}
 
+	msf_stream_reader::msf_stream_reader(const std::vector<char> &stream) : _stream(stream)
+	{
+	}
 	msf_stream_reader::msf_stream_reader(std::vector<char> &&stream) : _stream(std::move(stream))
 	{
 	}

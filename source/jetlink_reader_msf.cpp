@@ -19,26 +19,26 @@ namespace jetlink
 		}
 	}
 
-	msf_reader::msf_reader(const std::string &path) : _file(path, std::ios::in | std::ios::binary)
+	msf_reader::msf_reader(const std::string &path) : _file_stream(path, std::ios::in | std::ios::binary)
 	{
-		if (!_file.is_open())
+		if (!_file_stream.is_open())
 		{
 			return;
 		}
 
 		// Read file header
-		_file.read(reinterpret_cast<char *>(&_header), sizeof(_header));
+		_file_stream.read(reinterpret_cast<char *>(&_header), sizeof(_header));
 
 		const char signature[] = "Microsoft C/C++ MSF 7.00\r\n\032DS\0\0";
 
-		if (_file.bad() || memcmp(_header.signature, signature, sizeof(signature)) != 0)
+		if (_file_stream.bad() || std::memcmp(_header.signature, signature, sizeof(signature)) != 0)
 		{
 			return;
 		}
 
 		// Read root directory
-		const uint32_t num_root_pages = calc_page_count(_header.directory_size, _header.page_size);
-		const uint32_t num_root_index_pages = calc_page_count(num_root_pages * 4, _header.page_size);
+		const auto num_root_pages = calc_page_count(_header.directory_size, _header.page_size);
+		const auto num_root_index_pages = calc_page_count(num_root_pages * 4, _header.page_size);
 		std::vector<uint32_t> root_pages(num_root_pages);
 		std::vector<uint32_t> root_index_pages(num_root_index_pages);
 
@@ -47,26 +47,26 @@ namespace jetlink
 			return;
 		}
 
-		_file.read(reinterpret_cast<char *>(root_index_pages.data()), num_root_index_pages * 4);
+		_file_stream.read(reinterpret_cast<char *>(root_index_pages.data()), num_root_index_pages * 4);
 
-		for (unsigned int i = 0, k = 0, len; i < num_root_index_pages; i++, k += len)
+		for (uint32_t i = 0, k = 0, len; i < num_root_index_pages; i++, k += len)
 		{
 			len = std::min(_header.page_size / 4, num_root_pages - k);
 
-			_file.seekg(root_index_pages[i] * _header.page_size);
-			_file.read(reinterpret_cast<char *>(&root_pages[k]), len * 4);
+			_file_stream.seekg(root_index_pages[i] * _header.page_size);
+			_file_stream.read(reinterpret_cast<char *>(&root_pages[k]), len * 4);
 		}
 
 		// Read content stream sizes
-		unsigned int current_root_page = 0;
+		uint32_t current_root_page = 0;
 
-		for (unsigned int i = 0, j = 0; i < num_root_pages; i++)
+		for (uint32_t i = 0, j = 0; i < num_root_pages; i++)
 		{
-			_file.seekg(root_pages[i] * _header.page_size);
+			_file_stream.seekg(root_pages[i] * _header.page_size);
 
 			if (i == 0)
 			{
-				_file.read(reinterpret_cast<char *>(&j), 4);
+				_file_stream.read(reinterpret_cast<char *>(&j), 4);
 
 				_streams.reserve(j);
 			}
@@ -74,7 +74,7 @@ namespace jetlink
 			for (unsigned int k = i == 0; j > 0 && k < _header.page_size / 4; k++, j--)
 			{
 				uint32_t size = 0;
-				_file.read(reinterpret_cast<char *>(&size), 4);
+				_file_stream.read(reinterpret_cast<char *>(&size), 4);
 
 				if (size == 0xFFFFFFFF)
 				{
@@ -105,96 +105,81 @@ namespace jetlink
 
 			for (unsigned int num_pages_remaining = num_pages; num_pages_remaining > 0;)
 			{
-				const unsigned int page_offset = static_cast<unsigned int>(_file.tellg()) % _header.page_size;
-				const unsigned int size = std::min(num_pages_remaining * 4, _header.page_size - page_offset);
+				const auto page_offset = static_cast<uint32_t>(_file_stream.tellg()) % _header.page_size;
+				const auto size = std::min(num_pages_remaining * 4, _header.page_size - page_offset);
 
-				_file.read(reinterpret_cast<char *>(stream.page_indices.data() + num_pages - num_pages_remaining), size);
+				_file_stream.read(reinterpret_cast<char *>(stream.page_indices.data() + num_pages - num_pages_remaining), size);
 
 				num_pages_remaining -= size / 4;
 
 				if (page_offset + size == _header.page_size)
 				{
 					// Advance to next root page
-					_file.seekg(root_pages[++current_root_page] * _header.page_size);
+					_file_stream.seekg(root_pages[++current_root_page] * _header.page_size);
 				}
 			}
 		}
 
 		// Verify file
-		_is_valid = _file.good();
+		_is_valid = _file_stream.good();
 	}
 
-	std::unique_ptr<msf_stream_reader> msf_reader::stream(unsigned int index)
+	std::unique_ptr<msf_stream_reader> msf_reader::stream(size_t index)
 	{
 		if (index >= stream_count())
 		{
 			return nullptr;
 		}
 
-		return std::unique_ptr<msf_stream_reader>(new msf_stream_reader(this, index));
+		const auto &stream = _streams[index];
+		std::vector<char> stream_data(stream.page_indices.size() * _header.page_size);
+		size_t offset = 0;
+
+		for (auto page_index : stream.page_indices)
+		{
+			_file_stream.seekg(page_index * _header.page_size);
+			_file_stream.read(stream_data.data() + offset, _header.page_size);
+
+			offset += _header.page_size;
+		}
+
+		stream_data.resize(stream.size);
+
+		return std::make_unique<msf_stream_reader>(std::move(stream_data));
 	}
 
-	msf_stream_reader::msf_stream_reader(msf_reader *reader, unsigned int stream_index) : _reader(reader), _stream_index(stream_index)
+	msf_stream_reader::msf_stream_reader(std::vector<char> &&stream) : _stream(std::move(stream))
 	{
 	}
 
-	bool msf_stream_reader::read(void *buffer, size_t size)
+	size_t msf_stream_reader::read(void *buffer, size_t size)
 	{
-	continue_reading:
-		const auto page_index = (_stream_offset) / _reader->_header.page_size;
-		const auto page_index_last = (_stream_offset + size) / _reader->_header.page_size;
-
-		if (page_index >= _reader->_streams[_stream_index].page_indices.size())
+		if (_stream_offset >= _stream.size())
 		{
-			return false;
+			return 0;
 		}
 
-		_reader->_file.seekg(_reader->_streams[_stream_index].page_indices[page_index] * _reader->_header.page_size + _stream_offset % _reader->_header.page_size);
+		size = std::min(_stream.size() - _stream_offset, size);
+		std::memcpy(buffer, _stream.data() + _stream_offset, size);
+		_stream_offset += size;
 
-		if (page_index != page_index_last)
-		{
-			const auto offset = _reader->_header.page_size - _stream_offset % _reader->_header.page_size;
-
-			_reader->_file.read(static_cast<char *>(buffer), offset);
-
-			size -= offset;
-			buffer = static_cast<unsigned char *>(buffer) + offset;
-			_stream_offset += offset;
-
-			if (size != 0)
-			{
-				goto continue_reading;
-			}
-		}
-		else
-		{
-			_reader->_file.read(static_cast<char *>(buffer), size);
-			_stream_offset += size;
-		}
-
-		return _reader->_file.good();
+		return size;
 	}
-	template <> std::string msf_stream_reader::read<std::string>()
+	template <>
+	std::string msf_stream_reader::read<std::string>()
 	{
-		char buffer[128];
 		std::string result;
 
-		while (read(buffer, sizeof(buffer)))
+		while (_stream_offset < _stream.size())
 		{
-			const auto end_pos = buffer + 128;
-			const auto null_pos = std::find(buffer, end_pos, '\0');
+			const auto c = _stream[_stream_offset++];
 
-			if (null_pos != end_pos)
+			if (c == '\0')
 			{
-				_stream_offset -= end_pos - null_pos - 1u;
-
-				result += buffer;
 				break;
 			}
-			else
-			{
-				result += std::string(buffer, end_pos);
-			}
+
+			result += c;
 		}
 
 		return result;

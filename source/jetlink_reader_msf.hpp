@@ -12,8 +12,6 @@ namespace jetlink
 	/// </summary>
 	class msf_reader
 	{
-		friend class msf_stream_reader;
-
 	public:
 		/// <summary>
 		/// Opens a multi-stream file.
@@ -32,15 +30,15 @@ namespace jetlink
 		/// <summary>
 		/// Returns the number of content streams in this file.
 		/// </summary>
-		unsigned int stream_count() const
+		size_t stream_count() const
 		{
-			return static_cast<unsigned int>(_streams.size());
+			return _streams.size();
 		}
 		/// <summary>
 		/// Gets a content stream.
 		/// </summary>
 		/// <param name="index">The index the stream is located at.</param>
-		std::unique_ptr<msf_stream_reader> stream(unsigned int index);
+		std::unique_ptr<class msf_stream_reader> stream(size_t index);
 
 	private:
 		struct file_header
@@ -58,28 +56,28 @@ namespace jetlink
 			std::vector<uint32_t> page_indices;
 		};
 
-		std::ifstream _file;
+		std::ifstream _file_stream;
 		bool _is_valid = false;
 		file_header _header = {};
 		std::vector<content_stream> _streams;
 	};
 	/// <summary>
-	/// Class which provides reading access to the content streams of a multi-stream file.
+	/// Class which provides cached reading access to the content streams of a multi-stream file.
 	/// </summary>
 	class msf_stream_reader
 	{
-		friend class msf_reader;
-
 		msf_stream_reader(const msf_stream_reader &) = delete;
 		msf_stream_reader &operator=(const msf_stream_reader &) = delete;
 
 	public:
+		msf_stream_reader(std::vector<char> &&stream);
+
 		/// <summary>
 		/// Gets the total stream size in bytes.
 		/// </summary>
 		size_t size() const
 		{
-			return _reader->_streams[_stream_index].size;
+			return _stream.size();
 		}
 		/// <summary>
 		/// Gets the offset in bytes from stream start to the current input position.
@@ -122,23 +120,21 @@ namespace jetlink
 		/// </summary>
 		/// <param name="buffer">A pointer to the byte array to store the data to.</param>
 		/// <param name="size">The amount of bytes to read from the stream into the buffer.</param>
-		bool read(void *buffer, size_t size);
+		size_t read(void *buffer, size_t size);
 		/// <summary>
 		/// Extracts typed data from the stream.
 		/// </summary>
 		template <typename T> T read()
 		{
-			T buffer = {};
-			read(&buffer, sizeof(T));
+			T buffer = { };
+			read(&buffer, sizeof(buffer));
 
 			return buffer;
 		}
 
 	private:
-		msf_stream_reader(msf_reader *reader, unsigned int stream_index);
-
-		msf_reader *const _reader;
-		size_t _stream_index, _stream_offset = 0;
+		size_t _stream_offset = 0;
+		std::vector<char> _stream;
 	};
 
 	/// <summary>

@@ -153,8 +153,6 @@ namespace jetlink
 		}
 		void suspend_all_threads()
 		{
-			CreateThread(nullptr, 0, [](LPVOID) -> DWORD { while (true) { print("X"); Sleep(100); } return 0; }, nullptr, 0, nullptr);
-
 			const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
 
 			if (snapshot == INVALID_HANDLE_VALUE)

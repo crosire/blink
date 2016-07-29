@@ -95,13 +95,13 @@ namespace jetlink
 			}
 			else
 			{
-				print("  Error: Program debug database was created for a different executable file.");
+				print("  Error: Program debug database was created for a different executable file.\n");
 				return;
 			}
 		}
 		else
 		{
-			print("  Error: Could not find path to program debug database in executable image.");
+			print("  Error: Could not find path to program debug database in executable image.\n");
 			return;
 		}
 

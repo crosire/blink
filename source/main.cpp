@@ -1,5 +1,4 @@
 #include "jetlink.hpp"
-
 #include <Windows.h>
 #include <Psapi.h>
 #include <iostream>
@@ -159,7 +158,7 @@ int main(int argc, char *argv[])
 
 	if (remote_process == nullptr)
 	{
-		std::cout << "Failed to open target application process!";
+		std::cout << "Failed to open target application process!" << std::endl;
 
 		return 1;
 	}
@@ -172,19 +171,19 @@ int main(int argc, char *argv[])
 	{
 		CloseHandle(remote_process);
 
-		std::cout << "Machine architecture mismatch between target application and this application!";
+		std::cout << "Machine architecture mismatch between target application and this application!" << std::endl;
 
 		return 2;
 	}
 
-	std::cout << "Launching in target application [" << pid << "] ..." << std::endl;
+	std::cout << "Launching in target application ..." << std::endl;
 
 	// Create a pipe for communication between this process and the target application
 	HANDLE local_pipe = INVALID_HANDLE_VALUE;
 
 	if (!CreatePipe(&local_pipe, &console, nullptr, 512) || !DuplicateHandle(local_process, console, remote_process, &console, 0, FALSE, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS))
 	{
-		std::cout << "Failed to create new communication pipe!";
+		std::cout << "Failed to create new communication pipe!" << std::endl;
 
 		return 1;
 	}
@@ -201,7 +200,7 @@ int main(int argc, char *argv[])
 
 	if (remote_baseaddress == nullptr)
 	{
-		std::cout << "Failed to allocate memory in target application!";
+		std::cout << "Failed to allocate memory in target application!" << std::endl;
 
 		return 1;
 	}
@@ -211,18 +210,19 @@ int main(int argc, char *argv[])
 
 	if (!WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, &written) || written < moduleinfo.SizeOfImage)
 	{
-		std::cout << "Failed to write module image to target application!";
+		std::cout << "Failed to write module image to target application!" << std::endl;
 
 		return 1;
 	}
 
 	// Launch module main entry point in target application
 	const auto remote_entrypoint = remote_baseaddress + (reinterpret_cast<BYTE *>(&remote_main) - static_cast<BYTE *>(moduleinfo.lpBaseOfDll));
+	std::cout << "  Entry point was written to address " << static_cast<const void *>(remote_baseaddress) << std::endl;
 	const HANDLE remote_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(remote_entrypoint), remote_baseaddress, 0, nullptr);
 
 	if (remote_thread == nullptr)
 	{
-		std::cout << "Failed to launch remote thread in target application!";
+		std::cout << "Failed to launch remote thread in target application!" << std::endl;
 
 		return 1;
 	}
@@ -250,7 +250,7 @@ int main(int argc, char *argv[])
 	CloseHandle(remote_process);
 
 	// Exit
-	std::cout << "The target application has exited. Press any key to continue ...";
+	std::cout << "The target application has exited. Press any key to continue ..." << std::endl;
 
 	pause();
 

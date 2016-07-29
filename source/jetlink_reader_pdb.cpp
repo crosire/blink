@@ -1,7 +1,5 @@
 #include "jetlink_reader_pdb.hpp"
-
 #include <unordered_set>
-#include <boost\filesystem.hpp>
 
 /**
  * Microsoft program debug database file
@@ -837,6 +835,63 @@ namespace jetlink
 
 		return symbols;
 	}
+	std::vector<std::string> pdb_reader::buildtools()
+	{
+		if (!is_valid() || stream_count() <= 4)
+		{
+			return { };
+		}
+
+		// Read build info
+		msf_stream_reader stream(msf_reader::stream(4));
+		const auto header = stream.read<pdb_tpi_header>();
+
+		if (header.header_size + header.content_size != stream.size())
+		{
+			return { };
+		}
+
+		std::unordered_set<std::string> buildtools;
+		std::unordered_map<unsigned int, std::string> string_table;
+
+		// Skip any additional bytes that were appended to the header
+		stream.seek(header.header_size);
+
+		// A list of records in CodeView format
+		for (auto current_index = header.min_index; current_index < header.max_index; current_index++)
+		{
+			// Each records starts with 2 bytes containing the size of the record after this element
+			const auto size = stream.read<uint16_t>();
+			// Next 2 bytes contain an enumeration depicting the type and format of the following data
+			const auto tag = stream.read<uint16_t>();
+			// The next record is found by adding the current record size to the position of the previous size element
+			const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
+
+			switch (tag)
+			{
+				case 0x1603: // LF_BUILDINFO
+				{
+					stream.skip(6);
+					const auto build_tool_id = stream.read<uint32_t>();
+
+					buildtools.insert(string_table.at(build_tool_id));
+				}
+				case 0x1605: // LF_STRING_ID
+				{
+					stream.skip(4);
+					string_table[current_index] = stream.read<std::string>();
+					break;
+				}
+			}
+
+			stream.seek(next_record_offset);
+
+			// Each element is aligned to 4-byte boundary
+			stream.align(4);
+		}
+
+		return std::vector<std::string>(buildtools.begin(), buildtools.end());
+	}
 	std::vector<std::string> pdb_reader::sourcefiles()
 	{
 		if (!is_valid() || stream_count() <= 4)
@@ -875,17 +930,14 @@ namespace jetlink
 				{
 					stream.skip(2);
 					const auto directory_id = stream.read<uint32_t>();
-					const boost::filesystem::path directory(string_table.at(directory_id));
+					const std::string directory(string_table.at(directory_id));
 					stream.skip(4);
 					const auto source_file_id = stream.read<uint32_t>();
-					const boost::filesystem::path source_file(string_table.at(source_file_id));
+					const std::string source_file(string_table.at(source_file_id));
 
-					boost::system::error_code e;
-					const auto path = boost::filesystem::canonical(source_file, directory, e);
-
-					if (!e)
+					if (source_file.find("f:\\dd\\vctools") == std::string::npos)
 					{
-						sourcefiles.insert(path.string());
+						sourcefiles.insert(directory + '\\' + source_file);
 					}
 					break;
 				}

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "jetlink_reader_msf.hpp"
-
 #include <unordered_map>
 
 namespace jetlink
@@ -106,6 +105,7 @@ namespace jetlink
 		/// <summary>
 		/// Walks through the build info in this PDB file and returns all source file paths.
 		/// </summary>
+		std::vector<std::string> buildtools();
 		std::vector<std::string> sourcefiles();
 		/// <summary>
 		/// Returns the hash table of names found in the PDB file.

@@ -10,20 +10,26 @@
 
 namespace jetlink
 {
-	std::string longest_path(const std::vector<std::string> &dirs, char separator)
+	std::string longest_path(const std::vector<std::string> &paths)
 	{
-		std::vector<std::string>::const_iterator vsi = dirs.begin();
-		ptrdiff_t maxCharactersCommon = vsi->length();
-		std::string compareString = *vsi;
-		for (vsi = dirs.begin() + 1; vsi != dirs.end(); vsi++)
+		if (paths.empty())
 		{
-			std::pair<std::string::const_iterator, std::string::const_iterator> p =
-				std::mismatch(compareString.begin(), compareString.end(), vsi->begin());
-			if ((p.first - compareString.begin()) < maxCharactersCommon)
-				maxCharactersCommon = p.first - compareString.begin();
+			return std::string();
 		}
-		std::string::size_type found = compareString.rfind(separator, maxCharactersCommon);
-		return compareString.substr(0, found);
+
+		size_t length = paths[0].length();
+
+		for (auto it = paths.cbegin(); it != paths.cend(); ++it)
+		{
+			const size_t l = std::mismatch(paths[0].cbegin(), paths[0].cend(), it->cbegin(), it->cend()).first - paths[0].cbegin();
+
+			if (l < length)
+			{
+				length = l;
+			}
+		}
+
+		return paths[0].substr(0, paths[0].rfind('\\', length));
 	}
 
 	application::application() : _initialized(false), _executing(false), _compiler_stdin(INVALID_HANDLE_VALUE), _compiler_stdout(INVALID_HANDLE_VALUE)
@@ -91,6 +97,7 @@ namespace jetlink
 					_symbols.insert({ symbol.first, _imagebase + symbol.second });
 				}
 
+				_build_tool = pdb.buildtools()[0];
 				_sourcefiles = pdb.sourcefiles();
 			}
 			else
@@ -112,23 +119,11 @@ namespace jetlink
 			print("  Found source file: " + path + '\n');
 		}
 
-		_source_dir = longest_path(_sourcefiles, '\\');
+		_source_dir = longest_path(_sourcefiles);
 
 		print("Starting compiler process ...\n");
 
-		const char msvcversion[] = "12.0"; // TODO: Read this from PDB
-		#pragma region // Search for Visual Studio installation path
-		HKEY key = nullptr;
-		DWORD size = MAX_PATH;
-		char msvcpath[MAX_PATH + 1];
-
-		if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VC7", 0, KEY_READ | KEY_WOW64_32KEY, &key) || RegQueryValueEx(key, msvcversion, nullptr, nullptr, reinterpret_cast<BYTE *>(msvcpath), &size) | RegCloseKey(key))
-		{
-			return;
-		}
-		#pragma endregion
-
-		print("  Found Visual Studio: " + std::string(msvcpath) + '\n');
+		print("  Using build tool: " + _build_tool + '\n');
 
 		#pragma region // Launch compiler process
 		STARTUPINFO si = { sizeof(si) };
@@ -173,11 +168,12 @@ namespace jetlink
 
 		#pragma region // Set up compiler process environment variables
 #if _M_IX86
-		const std::string command = "\"" + std::string(msvcpath) + "vcvarsall.bat\" x86\n";
+		const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86\n";
 #endif
 #if _M_AMD64
-		const std::string command = "\"" + std::string(msvcpath) + "vcvarsall.bat\" x86_amd64\n";
+		const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86_amd64\n";
 #endif
+		DWORD size = 0;
 		WriteFile(_compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
 		#pragma endregion
 
@@ -265,7 +261,7 @@ namespace jetlink
 					print("Detected modification to: " + path + '\n');
 
 					// Build compiler command line
-					std::string cmdline = "cl /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc";
+					std::string cmdline = "\"" + _build_tool + "\" /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc";
 					cmdline += " /Fo\"" + _compiled_module_file + "\"";
 					cmdline += " \"" + path + "\"";
 

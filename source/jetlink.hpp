@@ -29,7 +29,7 @@ namespace jetlink
 		std::vector<std::string> _sourcefiles;
 		std::unordered_map<std::string, void *> _symbols;
 		std::unique_ptr<filewatcher> _filewatcher;
-		std::string _source_dir, _compiled_module_file;
+		std::string _build_tool, _source_dir, _compiled_module_file;
 		bool _initialized, _executing;
 		void *_compiler_stdin, *_compiler_stdout;
 	};

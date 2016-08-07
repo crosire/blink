@@ -25,29 +25,6 @@ inline void _initterm(_PVFV *beg, _PVFV *end)
 
 HANDLE console = INVALID_HANDLE_VALUE;
 
-void pause()
-{
-	DWORD mode;
-	const HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
-
-	if (!GetConsoleMode(console, &mode) || !SetConsoleMode(console, 0))
-	{
-		return;
-	}
-
-	FlushConsoleInputBuffer(console);
-
-	INPUT_RECORD input;
-
-	do
-	{
-		DWORD count;
-		ReadConsoleInput(console, &input, 1, &count);
-	}
-	while (input.EventType != KEY_EVENT || input.Event.KeyEvent.bKeyDown);
-
-	SetConsoleMode(console, mode);
-}
 void print(const char *message, size_t length)
 {
 	DWORD size = static_cast<DWORD>(length);
@@ -241,8 +218,9 @@ int main(int argc, char *argv[])
 		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), message, size, &size, nullptr);
 	}
 
-	DWORD exitcode = 0;
+	DWORD exitcode = 0, remote_exitcode = 0;
 	GetExitCodeThread(remote_thread, &exitcode);
+	GetExitCodeProcess(remote_process, &remote_exitcode);
 
 	// Clean up handles
 	CloseHandle(local_pipe);
@@ -250,9 +228,7 @@ int main(int argc, char *argv[])
 	CloseHandle(remote_process);
 
 	// Exit
-	std::cout << "The target application has exited. Press any key to continue ..." << std::endl;
-
-	pause();
+	std::cout << "The target application has exited with code " << remote_exitcode << "." << std::endl;
 
 	return static_cast<int>(exitcode);
 }

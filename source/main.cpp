@@ -121,7 +121,26 @@ int main(int argc, char *argv[])
 	if (argc > 1)
 	{
 		pid = strtoul(argv[1], nullptr, 0);
+
+		if (pid == 0)
+		{
+			STARTUPINFO startup_info = { sizeof(startup_info) };
+			PROCESS_INFORMATION process_info = { };
+
+			if (!CreateProcess(argv[1], nullptr, nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			{
+				std::cout << "Failed to start target application process!" << std::endl;
+
+				return 1;
+			}
+
+			pid = process_info.dwProcessId;
+
+			CloseHandle(process_info.hThread);
+			CloseHandle(process_info.hProcess);
+		}
 	}
+
 	if (pid == 0)
 	{
 		std::cout << "Enter PID of target application: ";
@@ -207,10 +226,10 @@ int main(int argc, char *argv[])
 	// Run main loop and pass on incoming messages to console
 	while (WaitForSingleObject(remote_thread, 0))
 	{
-		DWORD size = 512;
 		char message[512] = "";
+		DWORD size = ARRAYSIZE(message);
 
-		if (!ReadFile(local_pipe, message, size, &size, nullptr))
+		if (!ReadFile(local_pipe, message, size, &size, nullptr) || size == 0)
 		{
 			continue;
 		}

@@ -31,24 +31,17 @@ bool filewatcher::check(std::vector<std::string> &modifications)
 		return false;
 	}
 
-	const DWORD time = GetTickCount();
-
 	auto record = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(_buffer.get());
 
 	while (true)
 	{
 		record->FileNameLength /= sizeof(WCHAR);
 
-		std::string filename(MAX_PATH, 0);
-		filename.resize(WideCharToMultiByte(CP_UTF8, 0, record->FileName, record->FileNameLength, const_cast<char *>(filename.data()), static_cast<int>(filename.size()), nullptr, nullptr));
+		std::string filename(MAX_PATH + 1, 0);
+		filename.resize(WideCharToMultiByte(CP_UTF8, 0, record->FileName, record->FileNameLength, const_cast<char *>(filename.data()), MAX_PATH, nullptr, nullptr));
 		filename = _path + '\\' + filename;
 
-		if (_file_times[filename] < time - 5000)
-		{
-			_file_times[filename] = time;
-
-			modifications.push_back(std::move(filename));
-		}
+		modifications.push_back(std::move(filename));
 
 		if (record->NextEntryOffset == 0)
 		{

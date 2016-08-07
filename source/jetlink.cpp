@@ -171,7 +171,7 @@ namespace jetlink
 		const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86\n";
 #endif
 #if _M_AMD64
-		const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86_amd64\n";
+		const std::string command = "\"" + _build_tool + "\\..\\..\\..\\vcvarsall.bat\" x86_amd64\n";
 #endif
 		DWORD size = 0;
 		WriteFile(_compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);

@@ -28,7 +28,7 @@
     <IntDir>$(SolutionDir)\obj\$(Platform)\$(Configuration)\</IntDir>
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v140</PlatformToolset>
-    <CharacterSet>MultiByte</CharacterSet>
+    <CharacterSet>Unicode</CharacterSet>
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)'=='Debug'">

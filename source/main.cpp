@@ -124,10 +124,10 @@ int main(int argc, char *argv[])
 
 		if (pid == 0)
 		{
-			STARTUPINFO startup_info = { sizeof(startup_info) };
+			STARTUPINFOA startup_info = { sizeof(startup_info) };
 			PROCESS_INFORMATION process_info = { };
 
-			if (!CreateProcess(argv[1], nullptr, nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			if (!CreateProcessA(argv[1], nullptr, nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
 				std::cout << "Failed to start target application process!" << std::endl;
 

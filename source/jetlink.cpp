@@ -148,10 +148,10 @@ namespace jetlink
 
 		si.hStdError = si.hStdOutput;
 
-		char cmdline[] = "cmd.exe /q /d";
+		TCHAR cmdline[] = TEXT("cmd.exe /q /d");
 		PROCESS_INFORMATION pi;
 
-		if (!CreateProcessA(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+		if (!CreateProcess(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
 		{
 			CloseHandle(si.hStdInput);
 			CloseHandle(si.hStdOutput);

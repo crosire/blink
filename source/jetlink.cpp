@@ -21,6 +21,12 @@ namespace jetlink
 
 		for (auto it = paths.cbegin(); it != paths.cend(); ++it)
 		{
+			if (it->length() < length)
+			{
+				length = it->length();
+				continue;
+			}
+
 			const size_t l = std::mismatch(paths[0].cbegin(), paths[0].cend(), it->cbegin(), it->cend()).first - paths[0].cbegin();
 
 			if (l < length)
@@ -29,7 +35,7 @@ namespace jetlink
 			}
 		}
 
-		return paths[0].substr(0, paths[0].rfind('\\', length));
+		return paths[0].substr(0, length);
 	}
 
 	application::application() : _initialized(false), _executing(false), _compiler_stdin(INVALID_HANDLE_VALUE), _compiler_stdout(INVALID_HANDLE_VALUE)
@@ -97,8 +103,7 @@ namespace jetlink
 					_symbols.insert({ symbol.first, _imagebase + symbol.second });
 				}
 
-				_build_tool = pdb.buildtools()[0];
-				_sourcefiles = pdb.sourcefiles();
+				_source_files = pdb.sourcefiles();
 			}
 			else
 			{
@@ -114,16 +119,34 @@ namespace jetlink
 
 		_symbols.insert({ "__ImageBase", _imagebase });
 
-		for (const auto &path : _sourcefiles)
+		std::vector<std::string> cpp_files;
+
+		for (const auto &path : _source_files)
 		{
 			print("  Found source file: " + path + '\n');
+
+			// Let's add include directories for all source files and their parent folders
+			for (size_t i = 0, offset = std::string::npos; i < 2; ++i, --offset)
+			{
+				offset = path.find_last_of('\\', offset);
+				if (offset == std::string::npos)
+					break;
+				_include_dirs.insert(path.substr(0, offset));
+			}
+
+			if (path.rfind(".cpp") != std::string::npos && path.find("f:\\dd") == std::string::npos)
+				cpp_files.push_back(path);
 		}
 
-		_source_dir = longest_path(_sourcefiles);
+		_source_dir = longest_path(cpp_files);
+
+		if (_source_dir.empty())
+		{
+			print("  Error: Could not find any source files.\n");
+			return;
+		}
 
 		print("Starting compiler process ...\n");
-
-		print("  Using build tool: " + _build_tool + '\n');
 
 		#pragma region // Launch compiler process
 		STARTUPINFO si = { sizeof(si) };
@@ -168,10 +191,12 @@ namespace jetlink
 
 		#pragma region // Set up compiler process environment variables
 #if _M_IX86
-		const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86\n";
+		//const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86\n";
+		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86\n";
 #endif
 #if _M_AMD64
-		const std::string command = "\"" + _build_tool + "\\..\\..\\..\\vcvarsall.bat\" x86_amd64\n";
+		//const std::string command = "\"" + _build_tool + "\\..\\..\\..\\vcvarsall.bat\" x86_amd64\n";
+		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86_amd64\n";
 #endif
 		DWORD size = 0;
 		WriteFile(_compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
@@ -221,7 +246,7 @@ namespace jetlink
 
 				if (message.find("compile complete") != std::string::npos)
 				{
-					print("Finished compiling.\n");
+					print("Finished compiling \"" + _compiled_module_file + "\".\n");
 
 					_executing = false;
 				}
@@ -255,17 +280,14 @@ namespace jetlink
 					_executing = true;
 					_compiled_module_file = path.substr(0, path.find_last_of('.')) + ".obj";
 
-					std::vector<std::string> includes;
-					includes.push_back(_source_dir);
-
 					print("Detected modification to: " + path + '\n');
 
 					// Build compiler command line
-					std::string cmdline = "\"" + _build_tool + "\" /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc";
+					std::string cmdline = "cl.exe /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc /std:c++latest";
 					cmdline += " /Fo\"" + _compiled_module_file + "\"";
 					cmdline += " \"" + path + "\"";
 
-					for (const auto &include_path : includes)
+					for (const auto &include_path : _include_dirs)
 					{
 						cmdline += " /I \"" + include_path + "\"";
 					}

@@ -195,17 +195,13 @@ namespace jetlink
 	pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 	{
 		if (!msf_reader::is_valid() || msf_reader::stream_count() <= 4)
-		{
 			return;
-		}
 
 		// Read PDB info stream
 		msf_stream_reader pdbstream(msf_reader::stream(1));
 
 		if (pdbstream.size() == 0)
-		{
 			return;
-		}
 
 		const auto pdbheader = pdbstream.read<pdb_header>();
 
@@ -229,9 +225,7 @@ namespace jetlink
 		for (unsigned int i = 0; i < hash_table_size; i++)
 		{
 			if ((bitset_present[i / 32] & (1 << (i % 32))) == 0)
-			{
 				continue;
-			}
 
 			const auto name_offset = pdbstream.read<uint32_t>();
 			const auto stream_index = pdbstream.read<uint32_t>();
@@ -244,24 +238,17 @@ namespace jetlink
 			_named_streams.insert({ name, stream_index });
 		}
 
-		_is_valid = true;
+		_is_valid = stream_count() > 4;
 	}
 
 	std::vector<type> pdb_reader::types()
 	{
-		if (!is_valid() || stream_count() <= 2)
-		{
-			return { };
-		}
-
 		// Read type info (TPI stream)
 		msf_stream_reader stream(msf_reader::stream(2));
 		const auto header = stream.read<pdb_tpi_header>();
 
 		if (header.header_size + header.content_size != stream.size())
-		{
-			return { };
-		}
+			return {};
 
 		// Skip any additional bytes that were appended to the header
 		stream.seek(header.header_size);
@@ -755,19 +742,12 @@ namespace jetlink
 	}
 	std::unordered_map<std::string, ptrdiff_t> pdb_reader::symbols()
 	{
-		if (!is_valid() || stream_count() <= 3)
-		{
-			return { };
-		}
-
 		// Read debug info (DBI stream)
 		msf_stream_reader stream(msf_reader::stream(3));
 		const auto dbiheader = stream.read<pdb_dbi_header>();
 
 		if (dbiheader.signature != 0xFFFFFFFF)
-		{
-			return { };
-		}
+			return {};
 
 		// Read section headers
 		stream.seek(sizeof(pdb_dbi_header) + dbiheader.module_info_size + dbiheader.section_contribution_size + dbiheader.section_map_size + dbiheader.file_info_size + dbiheader.ts_map_size + dbiheader.ec_info_size);
@@ -837,19 +817,12 @@ namespace jetlink
 	}
 	std::vector<std::string> pdb_reader::buildtools()
 	{
-		if (!is_valid() || stream_count() <= 4)
-		{
-			return { };
-		}
-
 		// Read build info
 		msf_stream_reader stream(msf_reader::stream(4));
 		const auto header = stream.read<pdb_tpi_header>();
 
 		if (header.header_size + header.content_size != stream.size())
-		{
-			return { };
-		}
+			return {};
 
 		std::unordered_set<std::string> buildtools;
 		std::unordered_map<unsigned int, std::string> string_table;
@@ -894,19 +867,47 @@ namespace jetlink
 	}
 	std::vector<std::string> pdb_reader::sourcefiles()
 	{
-		if (!is_valid() || stream_count() <= 4)
+#if 1
+		// Read debug info (DBI stream)
+		msf_stream_reader stream(msf_reader::stream(3));
+		const auto dbiheader = stream.read<pdb_dbi_header>();
+
+		// https://llvm.org/docs/PDB/DbiStream.html#file-info-substream
+		stream.seek(sizeof(pdb_dbi_header) + dbiheader.module_info_size + dbiheader.section_contribution_size + dbiheader.section_map_size);
+		const uint16_t num_modules = stream.read<uint16_t>();
+		stream.skip(2 + num_modules * 2);
+
+		uint32_t num_source_files = 0;
+		for (uint16_t i = 0; i < num_modules; ++i)
+			num_source_files += stream.read<uint16_t>();
+
+		std::vector<uint32_t> file_name_offsets;
+		file_name_offsets.reserve(num_source_files);
+		for (uint32_t i = 0; i < num_source_files; ++i)
 		{
-			return { };
+			file_name_offsets.push_back(stream.read<uint32_t>());
 		}
 
+		auto offset = stream.tell();
+
+		std::vector<std::string> source_files;
+		source_files.reserve(num_source_files);
+		for (uint32_t i = 0; i < num_source_files; ++i)
+		{
+			stream.seek(offset + file_name_offsets[i]);
+
+			const std::string source_file = stream.read<std::string>();
+			source_files.push_back(source_file);
+		}
+
+		return source_files;
+#else
 		// Read build info
 		msf_stream_reader stream(msf_reader::stream(4));
 		const auto header = stream.read<pdb_tpi_header>();
 
 		if (header.header_size + header.content_size != stream.size())
-		{
-			return { };
-		}
+			return {};
 
 		std::unordered_set<std::string> sourcefiles;
 		std::unordered_map<unsigned int, std::string> string_table;
@@ -956,6 +957,7 @@ namespace jetlink
 		}
 
 		return std::vector<std::string>(sourcefiles.begin(), sourcefiles.end());
+#endif
 	}
 	std::unordered_map<unsigned int, std::string> pdb_reader::names()
 	{

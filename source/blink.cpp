@@ -131,8 +131,6 @@ blink::application::application() :
 
 	for (const auto &path : _source_files)
 	{
-		print("  Found source file: " + path + '\n');
-
 		// Let's add include directories for all source files and their parent folders
 		for (size_t i = 0, offset = std::string::npos; i < 2; ++i, --offset)
 		{
@@ -142,15 +140,22 @@ blink::application::application() :
 			_include_dirs.insert(path.substr(0, offset));
 		}
 
-		if (path.rfind(".cpp") != std::string::npos && path.find("f:\\dd") == std::string::npos)
+		if (path.find("c:\\program files") == std::string::npos &&
+			path.find("f:\\dd") == std::string::npos &&
+			path.find("d:\\agent\\_work\\3\\s") == std::string::npos &&
+			path.rfind(".cpp") != std::string::npos)
+		{
+			print("  Found source file: " + path + '\n');
+
 			cpp_files.push_back(path);
+		}
 	}
 
 	_source_dir = longest_path(cpp_files);
 
 	if (_source_dir.empty())
 	{
-		print("  Error: Could not find any source files.\n");
+		print("  Error: Could not determine project directory.\n");
 		return;
 	}
 

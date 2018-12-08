@@ -20,14 +20,8 @@ namespace blink
 		uint32_t data3;
 		uint32_t data4;
 
-		bool operator==(const guid &other)
-		{
-			return data1 == other.data1 && data2 == other.data2 && data3 == other.data3 && data4 == other.data4;
-		}
-		bool operator!=(const guid &other)
-		{
-			return !operator==(other);
-		}
+		bool operator==(const guid &other) { return data1 == other.data1 && data2 == other.data2 && data3 == other.data3 && data4 == other.data4; }
+		bool operator!=(const guid &other) { return !operator==(other); }
 	};
 
 	/// <summary>
@@ -56,31 +50,15 @@ namespace blink
 		/// <summary>
 		/// Returns the PDB file version.
 		/// </summary>
-		unsigned int version() const
-		{
-			return _version;
-		}
+		unsigned int version() const { return _version; }
 		/// <summary>
 		/// Returns the date time stamp at which the PDB file was created.
 		/// </summary>
-		unsigned int timestamp() const
-		{
-			return _timestamp;
-		}
+		unsigned int timestamp() const { return _timestamp; }
 		/// <summary>
 		/// Returns the GUID of this PDB file for matching it to its executable image file.
 		/// </summary>
-		guid guid() const
-		{
-			return _guid;
-		}
-		/// <summary>
-		/// Returns whether this PDB file exists and is of a valid format.
-		/// </summary>
-		bool is_valid() const
-		{
-			return _is_valid;
-		}
+		guid guid() const { return _guid; }
 
 		using msf_reader::stream;
 		/// <summary>
@@ -92,9 +70,7 @@ namespace blink
 			const auto it = _named_streams.find(name);
 
 			if (it == _named_streams.end())
-			{
-				return { };
-			}
+				return {};
 
 			return msf_reader::stream(it->second);
 		}
@@ -118,7 +94,6 @@ namespace blink
 		std::unordered_map<unsigned int, std::string> names();
 
 	private:
-		bool _is_valid = false;
 		unsigned int _version = 0, _timestamp = 0;
 		struct guid _guid = {};
 		std::unordered_map<std::string, unsigned int> _named_streams;

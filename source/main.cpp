@@ -9,6 +9,7 @@
 #include <iostream>
 
 #pragma region CRT sections
+// This exists to imitate the behavior of the Visual C++ CRT initialization code
 #pragma section(".CRT$XIA", long, read)
 #pragma section(".CRT$XIZ", long, read)
 #pragma section(".CRT$XCA", long, read)
@@ -160,7 +161,6 @@ int main(int argc, char *argv[])
 	if (remote_process == nullptr)
 	{
 		std::cout << "Failed to open target application process!" << std::endl;
-
 		return 1;
 	}
 
@@ -173,7 +173,6 @@ int main(int argc, char *argv[])
 		CloseHandle(remote_process);
 
 		std::cout << "Machine architecture mismatch between target application and this application!" << std::endl;
-
 		return 2;
 	}
 
@@ -185,7 +184,6 @@ int main(int argc, char *argv[])
 	if (!CreatePipe(&local_pipe, &console, nullptr, 512) || !DuplicateHandle(local_process, console, remote_process, &console, 0, FALSE, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS))
 	{
 		std::cout << "Failed to create new communication pipe!" << std::endl;
-
 		return 1;
 	}
 
@@ -202,7 +200,6 @@ int main(int argc, char *argv[])
 	if (remote_baseaddress == nullptr)
 	{
 		std::cout << "Failed to allocate memory in target application!" << std::endl;
-
 		return 1;
 	}
 
@@ -212,7 +209,6 @@ int main(int argc, char *argv[])
 	if (!WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, &written) || written < moduleinfo.SizeOfImage)
 	{
 		std::cout << "Failed to write module image to target application!" << std::endl;
-
 		return 1;
 	}
 
@@ -224,7 +220,6 @@ int main(int argc, char *argv[])
 	if (remote_thread == nullptr)
 	{
 		std::cout << "Failed to launch remote thread in target application!" << std::endl;
-
 		return 1;
 	}
 
@@ -235,9 +230,7 @@ int main(int argc, char *argv[])
 		DWORD size = ARRAYSIZE(message);
 
 		if (!ReadFile(local_pipe, message, size, &size, nullptr) || size == 0)
-		{
 			continue;
-		}
 
 		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), message, size, &size, nullptr);
 	}

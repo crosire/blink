@@ -10,16 +10,19 @@
 #include <vector>
 #include <unordered_map>
 
-class filewatcher
+namespace blink
 {
-public:
-	explicit filewatcher(const std::string &path);
-	~filewatcher();
+	class file_watcher
+	{
+	public:
+		explicit file_watcher(const std::string &path);
+		~file_watcher();
 
-	bool check(std::vector<std::string> &modifications);
+		bool check(std::vector<std::string> &modifications);
 
-private:
-	std::string _path;
-	std::unique_ptr<unsigned char[]> _buffer;
-	void *_handle, *_completion_handle;
-};
+	private:
+		std::string _path;
+		std::unique_ptr<unsigned char[]> _buffer;
+		void *_handle, *_completion_handle;
+	};
+}

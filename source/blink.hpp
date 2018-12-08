@@ -11,8 +11,6 @@
 #include <unordered_set>
 #include <unordered_map>
 
-class filewatcher;
-
 extern void print(const char *message, size_t length);
 inline void print(const std::string &message)
 {
@@ -35,7 +33,7 @@ namespace blink
 		std::vector<std::string> _source_files;
 		std::unordered_set<std::string> _include_dirs;
 		std::unordered_map<std::string, void *> _symbols;
-		std::unique_ptr<filewatcher> _filewatcher;
+		std::unique_ptr<class file_watcher> _watcher;
 		std::string _source_dir, _compiled_module_file;
 		bool _initialized, _executing;
 		void *_compiler_stdin, *_compiler_stdout;

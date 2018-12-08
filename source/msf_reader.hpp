@@ -26,25 +26,19 @@ namespace blink
 		/// <summary>
 		/// Returns whether this multi-stream file exists and is of a valid format.
 		/// </summary>
-		bool is_valid() const
-		{
-			return _is_valid;
-		}
+		bool is_valid() const { return _is_valid; }
 
 		/// <summary>
 		/// Returns the number of content streams in this file.
 		/// </summary>
-		size_t stream_count() const
-		{
-			return _streams.size();
-		}
+		size_t stream_count() const { return _streams.size(); }
 		/// <summary>
 		/// Gets a content stream.
 		/// </summary>
 		/// <param name="index">The index the stream is located at.</param>
 		std::vector<char> stream(size_t index);
 
-	private:
+	protected:
 		struct file_header
 		{
 			char signature[32];
@@ -65,46 +59,36 @@ namespace blink
 		file_header _header = {};
 		std::vector<content_stream> _streams;
 	};
+
 	/// <summary>
 	/// Class which provides cached reading access to the content streams of a multi-stream file.
 	/// </summary>
 	class msf_stream_reader
 	{
 	public:
-		msf_stream_reader(const std::vector<char> &stream);
 		msf_stream_reader(std::vector<char> &&stream);
+		msf_stream_reader(const std::vector<char> &stream);
 
 		/// <summary>
 		/// Gets the total stream size in bytes.
 		/// </summary>
-		size_t size() const
-		{
-			return _stream.size();
-		}
+		size_t size() const { return _stream.size(); }
 		/// <summary>
 		/// Gets the offset in bytes from stream start to the current input position.
 		/// </summary>
-		size_t tell() const
-		{
-			return _stream_offset;
-		}
+		size_t tell() const { return _stream_offset; }
 
 		/// <summary>
 		/// Increases the input position without reading any data from the stream.
 		/// </summary>
 		/// <param name="size">An offset in bytes from the current input position to the desired input position.</param>
-		void skip(size_t size)
-		{
-			_stream_offset += size;
-		}
+		void skip(size_t size) { _stream_offset += size; }
 		/// <summary>
 		/// Sets the input position.
 		/// </summary>
 		/// <param name="offset">An offset in bytes from stream start to the desired input position.</param>
-		void seek(size_t offset)
-		{
-			_stream_offset = offset;
-		}
+		void seek(size_t offset) { _stream_offset = offset; }
+
 		/// <summary>
 		/// Aligns the current input position.
 		/// </summary>
@@ -112,9 +96,7 @@ namespace blink
 		void align(size_t align)
 		{
 			if (_stream_offset % align != 0)
-			{
 				skip(align - _stream_offset % align);
-			}
 		}
 
 		/// <summary>
@@ -128,9 +110,8 @@ namespace blink
 		/// </summary>
 		template <typename T> T read()
 		{
-			T buffer = { };
+			T buffer = {};
 			read(&buffer, sizeof(buffer));
-
 			return buffer;
 		}
 

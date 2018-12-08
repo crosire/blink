@@ -1,3 +1,8 @@
+/**
+ * Copyright (C) 2016 Patrick Mours. All rights reserved.
+ * License: https://github.com/crosire/blink#license
+ */
+
 #include "pdb_reader.hpp"
 #include <unordered_set>
 

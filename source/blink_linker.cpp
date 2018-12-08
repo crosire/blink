@@ -184,7 +184,7 @@ bool blink::application::link(const std::string &path)
 
 	if (file == INVALID_HANDLE_VALUE)
 	{
-		print("Failed to open input file.\n");
+		print("Failed to open input file.");
 		return false;
 	}
 
@@ -200,7 +200,7 @@ bool blink::application::link(const std::string &path)
 	{
 		CloseHandle(file);
 
-		print("Failed to allocate executable memory region.\n");
+		print("Failed to allocate executable memory region.");
 		return false;
 	}
 
@@ -212,7 +212,7 @@ bool blink::application::link(const std::string &path)
 	{
 		VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-		print("Failed to read data from input file.\n");
+		print("Failed to read data from input file.");
 		return false;
 	}
 
@@ -227,7 +227,7 @@ bool blink::application::link(const std::string &path)
 	{
 		VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-		print("Input file is not of a valid format or was compiled for a different processor architecture.\n");
+		print("Input file is not of a valid format or was compiled for a different processor architecture.");
 		return false;
 	}
 
@@ -258,7 +258,9 @@ bool blink::application::link(const std::string &path)
 	{
 		uint8_t *target_address = nullptr;
 		const IMAGE_SYMBOL &symbol = symbol_table_base[i];
-		const auto symbol_name = symbol.N.Name.Short == 0 ? std::string(reinterpret_cast<const char *>(symbol_table_base + header.NumberOfSymbols) + symbol.N.Name.Long) : std::string(reinterpret_cast<const char *>(symbol.N.ShortName), strnlen(reinterpret_cast<const char *>(symbol.N.ShortName), IMAGE_SIZEOF_SHORT_NAME));
+		const auto symbol_name = symbol.N.Name.Short == 0 ?
+			std::string(reinterpret_cast<const char *>(symbol_table_base + header.NumberOfSymbols) + symbol.N.Name.Long) :
+			std::string(reinterpret_cast<const char *>(symbol.N.ShortName), strnlen(reinterpret_cast<const char *>(symbol.N.ShortName), IMAGE_SIZEOF_SHORT_NAME));
 		const auto symbol_table_lookup = _symbols.find(symbol_name);
 
 		if (symbol.StorageClass == IMAGE_SYM_CLASS_EXTERNAL && symbol.SectionNumber == IMAGE_SYM_UNDEFINED)
@@ -267,7 +269,7 @@ bool blink::application::link(const std::string &path)
 			{
 				VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-				print("Unresolved external symbol '" + symbol_name + "'.\n");
+				print("Unresolved external symbol '" + symbol_name + "'.");
 				return false;
 			}
 
@@ -291,7 +293,7 @@ bool blink::application::link(const std::string &path)
 			{
 				VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-				print("Unresolved weak external symbol '" + symbol_name + "'.\n");
+				print("Unresolved weak external symbol '" + symbol_name + "'.");
 				return false;
 			}
 		}
@@ -403,7 +405,7 @@ bool blink::application::link(const std::string &path)
 					break;
 #endif
 				default:
-					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.\n");
+					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
 					__debugbreak();
 					break;
 			}
@@ -416,7 +418,7 @@ bool blink::application::link(const std::string &path)
 
 	FlushInstructionCache(GetCurrentProcess(), modulebase, modulesize);
 
-	print("Successfully linked object file into executable image.\n");
+	print("Successfully linked object file into executable image.");
 
 	return true;
 }

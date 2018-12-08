@@ -45,7 +45,7 @@ blink::application::application() :
 	_imagebase = reinterpret_cast<BYTE *>(GetModuleHandle(nullptr));
 	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(_imagebase + reinterpret_cast<const IMAGE_DOS_HEADER *>(_imagebase)->e_lfanew);
 
-	print("Reading PE import directory ...\n");
+	print("Reading PE import directory ...");
 
 	#pragma region // Search import directory for additional symbols
 	const IMAGE_DATA_DIRECTORY import_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
@@ -65,7 +65,7 @@ blink::application::application() :
 	}
 	#pragma endregion
 
-	print("Reading PE debug info directory ...\n");
+	print("Reading PE debug info directory ...");
 
 	#pragma region // Search debug directory for program debug database file name
 	guid pdb_guid;
@@ -99,7 +99,7 @@ blink::application::application() :
 
 	if (!pdb_path.empty())
 	{
-		print("  Found program debug database: " + pdb_path + '\n');
+		print("  Found program debug database: " + pdb_path);
 
 		pdb_reader pdb(pdb_path);
 
@@ -115,13 +115,13 @@ blink::application::application() :
 		}
 		else
 		{
-			print("  Error: Program debug database was created for a different executable file.\n");
+			print("  Error: Program debug database was created for a different executable file.");
 			return;
 		}
 	}
 	else
 	{
-		print("  Error: Could not find path to program debug database in executable image.\n");
+		print("  Error: Could not find path to program debug database in executable image.");
 		return;
 	}
 
@@ -145,7 +145,7 @@ blink::application::application() :
 			path.find("d:\\agent\\_work\\3\\s") == std::string::npos &&
 			path.rfind(".cpp") != std::string::npos)
 		{
-			print("  Found source file: " + path + '\n');
+			print("  Found source file: " + path);
 
 			cpp_files.push_back(path);
 		}
@@ -155,11 +155,11 @@ blink::application::application() :
 
 	if (_source_dir.empty())
 	{
-		print("  Error: Could not determine project directory.\n");
+		print("  Error: Could not determine project directory.");
 		return;
 	}
 
-	print("Starting compiler process ...\n");
+	print("Starting compiler process ...");
 
 	#pragma region // Launch compiler process
 	STARTUPINFO si = { sizeof(si) };
@@ -200,7 +200,7 @@ blink::application::application() :
 	CloseHandle(si.hStdOutput);
 	#pragma endregion
 
-	print("  Started process with PID " + std::to_string(pi.dwProcessId) + '\n');
+	print("  Started process with PID " + std::to_string(pi.dwProcessId));
 
 	#pragma region // Set up compiler process environment variables
 #if _M_IX86
@@ -215,7 +215,7 @@ blink::application::application() :
 	WriteFile(_compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
 	#pragma endregion
 
-	print("Starting file system watcher for '" + _source_dir + "' ...\n");
+	print("Starting file system watcher for '" + _source_dir + "' ...");
 
 	// Start file system watcher
 	_watcher.reset(new file_watcher(_source_dir));
@@ -247,17 +247,16 @@ void blink::application::run()
 
 			for (size_t pos = 0, prev = 0; (pos = message.find('\n', prev)) != std::string::npos; prev = pos + 1)
 			{
-				const auto line = message.substr(prev, pos - prev + 1);
+				const auto line = message.substr(prev, pos - prev);
 
+				// Only print error information
 				if (line.find("error") != std::string::npos || line.find("warning") != std::string::npos)
-				{
 					print(line.c_str());
-				}
 			}
 
 			if (message.find("compile complete") != std::string::npos)
 			{
-				print("Finished compiling \"" + _compiled_module_file + "\".\n");
+				print("Finished compiling \"" + _compiled_module_file + "\".");
 
 				_executing = false;
 			}
@@ -287,17 +286,27 @@ void blink::application::run()
 				_executing = true;
 				_compiled_module_file = path.substr(0, path.find_last_of('.')) + ".obj";
 
-				print("Detected modification to: " + path + '\n');
+				print("Detected modification to: " + path);
 
 				// Build compiler command line
-				std::string cmdline = "cl.exe /c /nologo /GS /W3 /Zc:wchar_t /Z7 /Od /fp:precise /errorReport:prompt /WX- /Zc:forScope /Gd /MDd /EHsc /std:c++latest";
-				cmdline += " /Fo\"" + _compiled_module_file + "\"";
-				cmdline += " \"" + path + "\"";
-
+				std::string cmdline = "cl.exe "
+					"/c " // Compile only, do not link
+					"/nologo " // Suppress copyright message
+					"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
+					"/Od " // Disable optimizations
+					"/GS /sdl " // Enable security checks
+					//"/W3 " // Set warning level
+					"/MDd "
+					"/Gd " // __cdecl calling convention
+					"/EHsc " // Enable C++ exceptions
+					"/std:c++latest " // C++ standard version
+					"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
 				for (const auto &include_path : _include_dirs)
 					cmdline += " /I \"" + include_path + "\"";
+				cmdline += " /Fo\"" + _compiled_module_file + "\""; // Output object file
+				cmdline += " \"" + path + "\""; // Input source code file
 
-				cmdline += "\necho compile complete\n";
+				cmdline += "\necho compile complete\n"; // Message used to confirm that compile finished in message loop above
 
 				// Execute compiler command line
 				WriteFile(_compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);

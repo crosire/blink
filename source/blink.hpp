@@ -11,9 +11,10 @@
 #include <unordered_set>
 #include <unordered_map>
 
-extern void print(const char *message, size_t length);
-inline void print(const std::string &message)
+void print(const char *message, size_t length);
+inline void print(std::string message)
 {
+	message += '\n';
 	print(message.data(), message.size());
 }
 

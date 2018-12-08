@@ -1,0 +1,37 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="source\blink.cpp" />
+    <ClCompile Include="source\blink_linker.cpp" />
+    <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\msf_reader.cpp">
+      <Filter>pdb</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pdb_reader.cpp">
+      <Filter>pdb</Filter>
+    </ClCompile>
+    <ClCompile Include="source\file_watcher.cpp">
+      <Filter>utilities</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\blink.hpp" />
+    <ClInclude Include="source\pdb_reader.hpp">
+      <Filter>pdb</Filter>
+    </ClInclude>
+    <ClInclude Include="source\msf_reader.hpp">
+      <Filter>pdb</Filter>
+    </ClInclude>
+    <ClInclude Include="source\file_watcher.hpp">
+      <Filter>utilities</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="utilities">
+      <UniqueIdentifier>{b3f5ff38-e476-4591-bee7-79acc415eba3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="pdb">
+      <UniqueIdentifier>{1c5f0961-0093-4ae9-8a73-6f3aff7c1c3d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

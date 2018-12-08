@@ -1,4 +1,4 @@
-#include "jetlink_reader_msf.hpp"
+#include "msf_reader.hpp"
 #include <algorithm>
 
 /**
@@ -9,7 +9,7 @@
  * The stream assignments to corresponding pages are defined in the root directory (and stream zero).
  */
 
-namespace jetlink
+namespace blink
 {
 	namespace
 	{

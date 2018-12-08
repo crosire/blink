@@ -1,4 +1,4 @@
-#include "jetlink_reader_pdb.hpp"
+#include "pdb_reader.hpp"
 #include <unordered_set>
 
 /**
@@ -14,7 +14,7 @@
 
 #pragma pack(1)
 
-namespace jetlink
+namespace blink
 {
 	namespace
 	{

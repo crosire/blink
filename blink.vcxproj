@@ -25,8 +25,8 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <OutDir>$(SolutionDir)\bin\$(Platform)\$(Configuration)\</OutDir>
-    <IntDir>$(SolutionDir)\obj\$(Platform)\$(Configuration)\</IntDir>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)intermediate\$(Platform)\$(Configuration)\</IntDir>
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset>v141</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
@@ -108,18 +108,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="source\filewatcher.cpp" />
-    <ClCompile Include="source\jetlink.cpp" />
-    <ClCompile Include="source\jetlink_linker.cpp" />
-    <ClCompile Include="source\jetlink_reader_msf.cpp" />
-    <ClCompile Include="source\jetlink_reader_pdb.cpp" />
+    <ClCompile Include="source\file_watcher.cpp" />
+    <ClCompile Include="source\blink.cpp" />
+    <ClCompile Include="source\blink_linker.cpp" />
+    <ClCompile Include="source\msf_reader.cpp" />
+    <ClCompile Include="source\pdb_reader.cpp" />
     <ClCompile Include="source\main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\filewatcher.hpp" />
-    <ClInclude Include="source\jetlink.hpp" />
-    <ClInclude Include="source\jetlink_reader_msf.hpp" />
-    <ClInclude Include="source\jetlink_reader_pdb.hpp" />
+    <ClInclude Include="source\file_watcher.hpp" />
+    <ClInclude Include="source\blink.hpp" />
+    <ClInclude Include="source\msf_reader.hpp" />
+    <ClInclude Include="source\pdb_reader.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

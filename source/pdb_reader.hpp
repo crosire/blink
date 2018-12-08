@@ -1,9 +1,9 @@
 #pragma once
 
-#include "jetlink_reader_msf.hpp"
+#include "msf_reader.hpp"
 #include <unordered_map>
 
-namespace jetlink
+namespace blink
 {
 	/// <summary>
 	/// A global unique identifier (GUID).

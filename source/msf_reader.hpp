@@ -4,7 +4,7 @@
 #include <vector>
 #include <fstream>
 
-namespace jetlink
+namespace blink
 {
 	/// <summary>
 	/// Class which splits a multi-stream file into its content streams.

@@ -1,4 +1,4 @@
-#include "jetlink.hpp"
+#include "blink.hpp"
 #include <Windows.h>
 #include <Psapi.h>
 #include <iostream>
@@ -103,7 +103,7 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 	Sleep(100);
 
 	// Run main loop
-	jetlink::application().run();
+	blink::application().run();
 
 	// Small timeout to prevent race condition
 	Sleep(100);

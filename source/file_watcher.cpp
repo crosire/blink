@@ -1,5 +1,4 @@
-#include "filewatcher.hpp"
-
+#include "file_watcher.hpp"
 #include <Windows.h>
 
 const DWORD buffer_size = sizeof(FILE_NOTIFY_INFORMATION) + MAX_PATH * sizeof(WCHAR);

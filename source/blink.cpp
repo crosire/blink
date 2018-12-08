@@ -1,14 +1,13 @@
-#include "jetlink.hpp"
-#include "jetlink_reader_pdb.hpp"
-#include "filewatcher.hpp"
-
+#include "blink.hpp"
+#include "pdb_reader.hpp"
+#include "file_watcher.hpp"
 #include <string>
 #include <atomic>
 #include <unordered_map>
 #include <algorithm>
 #include <Windows.h>
 
-namespace jetlink
+namespace blink
 {
 	std::string longest_path(const std::vector<std::string> &paths)
 	{

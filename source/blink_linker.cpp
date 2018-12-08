@@ -1,5 +1,4 @@
-#include "jetlink.hpp"
-
+#include "blink.hpp"
 #include <assert.h>
 #include <vector>
 #include <fstream>
@@ -7,7 +6,7 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 
-namespace jetlink
+namespace blink
 {
 	namespace
 	{

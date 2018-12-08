@@ -14,7 +14,7 @@ inline void print(const std::string &message)
 	print(message.data(), message.size());
 }
 
-namespace jetlink
+namespace blink
 {
 	class application
 	{

@@ -142,7 +142,7 @@ blink::application::application() :
 
 		if (path.find("c:\\program files") == std::string::npos &&
 			path.find("f:\\dd") == std::string::npos &&
-			path.find("d:\\agent\\_work\\3\\s") == std::string::npos &&
+			path.find("d:\\agent\\_work") == std::string::npos &&
 			path.rfind(".cpp") != std::string::npos)
 		{
 			print("  Found source file: " + path);
@@ -254,9 +254,15 @@ void blink::application::run()
 					print(line.c_str());
 			}
 
-			if (message.find("compile complete") != std::string::npos)
+			const size_t offset = message.find("compile complete");
+			if (offset != std::string::npos)
 			{
-				print("Finished compiling \"" + _compiled_module_file + "\".");
+				const std::string exit_code = message.substr(offset + 17 /* strlen("compile complete ") */, message.find('\n', offset) - offset - 18);
+
+				print("Finished compiling \"" + _compiled_module_file + "\" with code " + exit_code + ".");
+
+				if (exit_code != "0") // Do not link if compilation was not successful
+					_compiled_module_file.clear();
 
 				_executing = false;
 			}
@@ -303,7 +309,7 @@ void blink::application::run()
 				cmdline += " /Fo\"" + _compiled_module_file + "\""; // Output object file
 				cmdline += " \"" + path + "\""; // Input source code file
 
-				cmdline += "\necho compile complete\n"; // Message used to confirm that compile finished in message loop above
+				cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
 
 				// Execute compiler command line
 				WriteFile(_compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);

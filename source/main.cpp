@@ -46,36 +46,36 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 	auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	const auto relocation_delta = imagebase - reinterpret_cast<const BYTE *>(imageheaders->OptionalHeader.ImageBase);
 
-	while (relocation->VirtualAddress != 0)
+	if (relocation_delta != 0) // No need to relocate anything if the delta is zero
 	{
-		const auto field_count = (relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
-
-		for (size_t k = 0; k < field_count; k++)
+		while (relocation->VirtualAddress != 0)
 		{
-			const auto field = reinterpret_cast<const WORD *>(relocation + 1)[k];
+			const auto field_count = (relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
 
-			const auto type = field >> 12;
-			const auto offset = field & 0xFFF;
-
-			switch (type)
+			for (size_t k = 0; k < field_count; k++)
 			{
-			case IMAGE_REL_BASED_ABSOLUTE:
-				break;
-			case IMAGE_REL_BASED_HIGHLOW:
-				*reinterpret_cast<UINT32 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT32>(relocation_delta);
-				break;
-			case IMAGE_REL_BASED_DIR64:
-				*reinterpret_cast<UINT64 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT64>(relocation_delta);
-				break;
-			default:
-				return 1;
-			}
-		}
+				const WORD field = reinterpret_cast<const WORD *>(relocation + 1)[k];
 
-		relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(reinterpret_cast<const BYTE *>(relocation) + relocation->SizeOfBlock);
+				switch (field >> 12)
+				{
+				case IMAGE_REL_BASED_ABSOLUTE:
+					break; // This one does not do anything and exists only for table alignment, so ignore it
+				case IMAGE_REL_BASED_HIGHLOW:
+					*reinterpret_cast<UINT32 *>(imagebase + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT32>(relocation_delta);
+					break;
+				case IMAGE_REL_BASED_DIR64:
+					*reinterpret_cast<UINT64 *>(imagebase + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT64>(relocation_delta);
+					break;
+				default:
+					return 1; // Exit when encountering an unknown relocation type
+				}
+			}
+
+			relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(reinterpret_cast<const BYTE *>(relocation) + relocation->SizeOfBlock);
+		}
 	}
 
-	// Resolve imports
+	// Update import address table (IAT)
 	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 
 	for (size_t i = 0; import_directory_entries[i].FirstThunk != 0; i++)
@@ -84,7 +84,7 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].Characteristics);
 		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].FirstThunk);
 
-		// It is safe to call LoadLibrary here because KERNEL32.dll is always loaded
+		// It is safe to call 'LoadLibrary' here because the IAT entry for it was copied from the parent process and KERNEL32.dll is always loaded at the same address
 		const HMODULE module = LoadLibraryA(name);
 
 		if (module == nullptr)
@@ -155,7 +155,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Open target application process
-	const DWORD access = PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION;
+	const DWORD access = PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION;
 	const HANDLE local_process = GetCurrentProcess();
 	const HANDLE remote_process = OpenProcess(access, FALSE, pid);
 
@@ -192,12 +192,63 @@ int main(int argc, char *argv[])
 	if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(nullptr), &moduleinfo, sizeof(moduleinfo)))
 		return 1;
 
-	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, moduleinfo.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+#ifdef _DEBUG // Use 'LoadLibrary' to create image in target application so that debug information is loaded
+	TCHAR load_path[MAX_PATH];
+	GetModuleFileName(nullptr, load_path, MAX_PATH);
 
-	// Write module image to target application (including the value of the global 'console' variable)
+	const auto load_param = VirtualAllocEx(remote_process, nullptr, MAX_PATH, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+	// Write 'LoadLibrary' call argument to target application
+	if (load_param == nullptr || !WriteProcessMemory(remote_process, load_param, load_path, MAX_PATH, nullptr))
+	{
+		std::cout << "Failed to allocate and write 'LoadLibrary' argument in target application!" << std::endl;
+		return 1;
+	}
+
+	// Execute 'LoadLibrary' in target application
+	const HANDLE load_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibrary), load_param, 0, nullptr);
+
+	if (load_thread == nullptr)
+	{
+		std::cout << "Failed to execute 'LoadLibrary' in target application!" << std::endl;
+		return 1;
+	}
+
+	// Wait for loading to finish and clean up parameter memory afterwards
+	WaitForSingleObject(load_thread, INFINITE);
+	CloseHandle(load_thread);
+	VirtualFreeEx(remote_process, load_param, 0, MEM_RELEASE);
+
+	// Find address of the now loaded module in the target application process
+	DWORD modules_size = 0;
+	EnumProcessModulesEx(remote_process, nullptr, 0, &modules_size, LIST_MODULES_ALL);
+	std::vector<HMODULE> modules(modules_size / sizeof(HMODULE));
+	EnumProcessModulesEx(remote_process, modules.data(), modules_size, &modules_size, LIST_MODULES_ALL);
+
+	BYTE *remote_baseaddress = nullptr;
+
+	for (HMODULE module : modules)
+	{
+		TCHAR module_path[MAX_PATH];
+		GetModuleFileNameEx(remote_process, module, module_path, sizeof(module_path));
+
+		if (lstrcmp(module_path, load_path) == 0)
+		{
+			remote_baseaddress = reinterpret_cast<BYTE *>(module);
+			break;
+		}
+	}
+
+	// Make the entire image writable so the copy operation below can succeed
+	VirtualProtectEx(remote_process, remote_baseaddress, moduleinfo.SizeOfImage, PAGE_EXECUTE_READWRITE, &modules_size);
+#else
+	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, moduleinfo.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+#endif
+
+	// Copy current module image to target application (including the IAT and value of the global 'console' variable)
 	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, nullptr))
 	{
-		std::cout << "Failed to allocate and write memory in target application!" << std::endl;
+		std::cout << "Failed to allocate and write image in target application!" << std::endl;
 		return 1;
 	}
 

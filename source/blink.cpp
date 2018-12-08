@@ -293,11 +293,8 @@ void blink::application::run()
 					"/c " // Compile only, do not link
 					"/nologo " // Suppress copyright message
 					"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
+					"/MDd " // Link with 'MSVCRTD.lib'
 					"/Od " // Disable optimizations
-					"/GS /sdl " // Enable security checks
-					//"/W3 " // Set warning level
-					"/MDd "
-					"/Gd " // __cdecl calling convention
 					"/EHsc " // Enable C++ exceptions
 					"/std:c++latest " // C++ standard version
 					"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance

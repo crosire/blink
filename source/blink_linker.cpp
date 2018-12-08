@@ -184,7 +184,7 @@ bool blink::application::link(const std::string &path)
 
 	if (file == INVALID_HANDLE_VALUE)
 	{
-		print("JETLINK: Failed to open input file.\n");
+		print("Failed to open input file.\n");
 		return false;
 	}
 
@@ -200,7 +200,7 @@ bool blink::application::link(const std::string &path)
 	{
 		CloseHandle(file);
 
-		print("JETLINK: Failed to allocate executable memory region.\n");
+		print("Failed to allocate executable memory region.\n");
 		return false;
 	}
 
@@ -212,7 +212,7 @@ bool blink::application::link(const std::string &path)
 	{
 		VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-		print("JETLINK: Failed to read data from input file.\n");
+		print("Failed to read data from input file.\n");
 		return false;
 	}
 
@@ -227,7 +227,7 @@ bool blink::application::link(const std::string &path)
 	{
 		VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-		print("JETLINK: Input file is not of a valid format or was compiled for a different processor architecture.\n");
+		print("Input file is not of a valid format or was compiled for a different processor architecture.\n");
 		return false;
 	}
 
@@ -244,7 +244,7 @@ bool blink::application::link(const std::string &path)
 
 		if (section.PointerToRawData == 0 && section.Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
 		{
-			assert(additional_data_base + section.SizeOfRawData <= modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
+			assert(additional_data_base + section.SizeOfRawData <= modulebase + allocsize && "Additional data allocated is not big enough.");
 
 			// Memory was already initialized to zero by VirtualAlloc
 			section.PointerToRawData = static_cast<DWORD>(additional_data_base - modulebase);
@@ -267,7 +267,7 @@ bool blink::application::link(const std::string &path)
 			{
 				VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-				print("JETLINK: Unresolved external symbol '" + symbol_name + "'.\n");
+				print("Unresolved external symbol '" + symbol_name + "'.\n");
 				return false;
 			}
 
@@ -283,7 +283,7 @@ bool blink::application::link(const std::string &path)
 			{
 				const auto auxsymbol = reinterpret_cast<const IMAGE_AUX_SYMBOL_EX &>(symbol_table_base[i + 1]).Sym;
 
-				assert(auxsymbol.WeakDefaultSymIndex < i && "JETLINK: Unexpected symbol ordering for weak external symbol.");
+				assert(auxsymbol.WeakDefaultSymIndex < i && "Unexpected symbol ordering for weak external symbol.");
 
 				target_address = local_symbol_addresses[auxsymbol.WeakDefaultSymIndex];
 			}
@@ -291,7 +291,7 @@ bool blink::application::link(const std::string &path)
 			{
 				VirtualFree(modulebase, modulesize, MEM_RELEASE);
 
-				print("JETLINK: Unresolved weak external symbol '" + symbol_name + "'.\n");
+				print("Unresolved weak external symbol '" + symbol_name + "'.\n");
 				return false;
 			}
 		}
@@ -342,7 +342,7 @@ bool blink::application::link(const std::string &path)
 			// Add relay thunk if distance to target exceeds 32-bit range
 			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbol_table_base[relocation.SymbolTableIndex].Type))
 			{
-				assert(additional_data_base + 12 < modulebase + allocsize && "JETLINK: Additional data allocated is not big enough.");
+				assert(additional_data_base + 12 < modulebase + allocsize && "Additional data allocated is not big enough.");
 
 				write_jump(additional_data_base, target_address);
 
@@ -378,11 +378,11 @@ bool blink::application::link(const std::string &path)
 					*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
 					break;
 				case IMAGE_REL_AMD64_ADDR32: // absolute virtual address
-					assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "JETLINK: Address overflow in absolute relocation.");
+					assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
 					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
 					break;
 				case IMAGE_REL_AMD64_ADDR32NB: // target relative to __ImageBase
-					assert(target_address - _imagebase == static_cast<int32_t>(target_address - _imagebase) && "JETLINK: Address overflow in relative relocation.");
+					assert(target_address - _imagebase == static_cast<int32_t>(target_address - _imagebase) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _imagebase);
 					break;
 				case IMAGE_REL_AMD64_REL32: // target relative to next instruction after relocation
@@ -391,19 +391,19 @@ bool blink::application::link(const std::string &path)
 				case IMAGE_REL_AMD64_REL32_3:
 				case IMAGE_REL_AMD64_REL32_4:
 				case IMAGE_REL_AMD64_REL32_5:
-					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "JETLINK: Address overflow in relative relocation.");
+					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
 					break;
 				case IMAGE_REL_AMD64_SECTION: // target section index
 					*reinterpret_cast<uint16_t *>(relocation_address) = symbol_table_base[relocation.SymbolTableIndex].SectionNumber;
 					break;
 				case IMAGE_REL_AMD64_SECREL:
-					assert(target_address - _imagebase == static_cast<int32_t>(target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "JETLINK: Address overflow in relative relocation.");
+					assert(target_address - _imagebase == static_cast<int32_t>(target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData));
 					break;
 #endif
 				default:
-					print("JETLINK: Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.\n");
+					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.\n");
 					__debugbreak();
 					break;
 			}
@@ -416,7 +416,7 @@ bool blink::application::link(const std::string &path)
 
 	FlushInstructionCache(GetCurrentProcess(), modulebase, modulesize);
 
-	print("JETLINK: Successfully linked object file into executable image.\n");
+	print("Successfully linked object file into executable image.\n");
 
 	return true;
 }

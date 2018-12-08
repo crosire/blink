@@ -59,16 +59,16 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 
 			switch (type)
 			{
-				case IMAGE_REL_BASED_ABSOLUTE:
-					break;
-				case IMAGE_REL_BASED_HIGHLOW:
-					*reinterpret_cast<UINT32 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT32>(relocation_delta);
-					break;
-				case IMAGE_REL_BASED_DIR64:
-					*reinterpret_cast<UINT64 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT64>(relocation_delta);
-					break;
-				default:
-					return 1;
+			case IMAGE_REL_BASED_ABSOLUTE:
+				break;
+			case IMAGE_REL_BASED_HIGHLOW:
+				*reinterpret_cast<UINT32 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT32>(relocation_delta);
+				break;
+			case IMAGE_REL_BASED_DIR64:
+				*reinterpret_cast<UINT64 *>(imagebase + relocation->VirtualAddress + offset) += static_cast<INT64>(relocation_delta);
+				break;
+			default:
+				return 1;
 			}
 		}
 
@@ -88,9 +88,7 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 		const HMODULE module = LoadLibraryA(name);
 
 		if (module == nullptr)
-		{
 			continue;
-		}
 
 		for (size_t k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
 		{
@@ -131,12 +129,15 @@ int main(int argc, char *argv[])
 		if (pid == 0)
 		{
 			STARTUPINFOA startup_info = { sizeof(startup_info) };
-			PROCESS_INFORMATION process_info = { };
+			PROCESS_INFORMATION process_info = {};
 
-			if (!CreateProcessA(argv[1], nullptr, nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			std::string command_line;
+			for (int i = 1; i < argc; ++i, command_line += ' ')
+				command_line += argv[i];
+
+			if (!CreateProcessA(nullptr, const_cast<char *>(command_line.data()), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
 				std::cout << "Failed to start target application process!" << std::endl;
-
 				return 1;
 			}
 
@@ -187,28 +188,16 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	// Allocate memory in target application
 	MODULEINFO moduleinfo;
-
 	if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(nullptr), &moduleinfo, sizeof(moduleinfo)))
-	{
 		return 1;
-	}
 
-	const auto remote_baseaddress = static_cast<unsigned char *>(VirtualAllocEx(remote_process, nullptr, moduleinfo.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-
-	if (remote_baseaddress == nullptr)
-	{
-		std::cout << "Failed to allocate memory in target application!" << std::endl;
-		return 1;
-	}
+	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, moduleinfo.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
 
 	// Write module image to target application (including the value of the global 'console' variable)
-	SIZE_T written = 0;
-
-	if (!WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, &written) || written < moduleinfo.SizeOfImage)
+	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, nullptr))
 	{
-		std::cout << "Failed to write module image to target application!" << std::endl;
+		std::cout << "Failed to allocate and write memory in target application!" << std::endl;
 		return 1;
 	}
 

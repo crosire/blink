@@ -9,7 +9,7 @@
 #include <iostream>
 
 #pragma region CRT sections
-// This exists to imitate the behavior of the Visual C++ CRT initialization code
+// This exists to imitate the behavior of the CRT initialization code
 #pragma section(".CRT$XIA", long, read)
 #pragma section(".CRT$XIZ", long, read)
 #pragma section(".CRT$XCA", long, read)
@@ -20,13 +20,7 @@ __declspec(allocate(".CRT$XIA")) _PVFV __xi_a[] = { nullptr };
 __declspec(allocate(".CRT$XIZ")) _PVFV __xi_z[] = { nullptr };
 __declspec(allocate(".CRT$XCA")) _PVFV __xc_a[] = { nullptr };
 __declspec(allocate(".CRT$XCZ")) _PVFV __xc_z[] = { nullptr };
-
-inline void _initterm(_PVFV *beg, _PVFV *end)
-{
-	for (; beg < end; beg++)
-		if (*beg)
-			(**beg)();
-}
+extern "C" void _initterm(_PVFV *beg, _PVFV *end);
 #pragma endregion
 
 HANDLE console = INVALID_HANDLE_VALUE;
@@ -103,14 +97,8 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 	_initterm(__xc_a, __xc_z);
 	#pragma endregion
 
-	// Small timeout to prevent race condition
-	Sleep(100);
-
 	// Run main loop
 	blink::application().run();
-
-	// Small timeout to prevent race condition
-	Sleep(100);
 
 	// Clean up handles
 	CloseHandle(console);

@@ -178,12 +178,12 @@ bool blink::application::link(const std::string &path)
 	// Read symbol + string table and section headers from input file
 	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols + string_table_size / sizeof(IMAGE_SYMBOL));
 	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
-	if (DWORD read; !ReadFile(file, symbols.data(), symbols.size() * sizeof(IMAGE_SYMBOL), &read, nullptr))
+	if (DWORD read; !ReadFile(file, symbols.data(), static_cast<DWORD>(symbols.size() * sizeof(IMAGE_SYMBOL)), &read, nullptr))
 		return false;
 
 	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
 	SetFilePointer(file, sizeof(IMAGE_FILE_HEADER) + header.SizeOfOptionalHeader, nullptr, FILE_BEGIN);
-	if (DWORD read; !ReadFile(file, sections.data(), sections.size() * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+	if (DWORD read; !ReadFile(file, sections.data(), static_cast<DWORD>(sections.size() * sizeof(IMAGE_SECTION_HEADER)), &read, nullptr))
 		return false;
 
 	// Calculate total module size
@@ -224,7 +224,7 @@ bool blink::application::link(const std::string &path)
 		}
 
 		// Check section alignment
-		DWORD alignment = section.Characteristics & IMAGE_SCN_ALIGN_MASK;
+		UINT_PTR alignment = section.Characteristics & IMAGE_SCN_ALIGN_MASK;
 		alignment = alignment ? 1 << ((alignment >> 20) - 1) : 1;
 
 		// Align section memory base pointer to its required alignment
@@ -239,7 +239,7 @@ bool blink::application::link(const std::string &path)
 				return false;
 		}
 
-		section.PointerToRawData = section_base - module_base;
+		section.PointerToRawData = static_cast<DWORD>(section_base - module_base);
 		section_base += section.SizeOfRawData;
 
 		// Read any relocation data attached to this section
@@ -251,7 +251,7 @@ bool blink::application::link(const std::string &path)
 				return false;
 		}
 
-		section.PointerToRelocations = section_base - module_base;
+		section.PointerToRelocations = static_cast<DWORD>(section_base - module_base);
 		section_base += section.NumberOfRelocations * sizeof(IMAGE_RELOCATION);
 	}
 
@@ -343,8 +343,6 @@ bool blink::application::link(const std::string &path)
 			// Add relay thunk if distance to target exceeds 32-bit range
 			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbols[relocation.SymbolTableIndex].Type))
 			{
-				assert(section_base + 12 < allocated_module_size && "Additional data allocated is not big enough.");
-
 				write_jump(section_base, target_address);
 
 				target_address = section_base;

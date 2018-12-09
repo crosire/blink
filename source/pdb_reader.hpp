@@ -25,17 +25,6 @@ namespace blink
 	};
 
 	/// <summary>
-	/// Information about a type (both built-in and user-defined).
-	/// </summary>
-	struct type
-	{
-		std::string mangled_name;
-		size_t size;
-		unsigned int base_type_index;
-		unsigned char is_builtin : 1, is_const : 1, is_volatile : 1, is_unaligned : 1, is_array : 1, is_pointer : 1, is_function : 1, is_forward_reference : 1;
-	};
-
-	/// <summary>
 	/// Class which reads a program debug database.
 	/// </summary>
 	class pdb_reader : public msf_reader
@@ -76,17 +65,12 @@ namespace blink
 		}
 
 		/// <summary>
-		/// Walks through all types in this PDB file and returns them.
-		/// </summary>
-		std::vector<type> types();
-		/// <summary>
 		/// Walks through all symbols in this PDB file and returns them.
 		/// </summary>
 		std::unordered_map<std::string, uintptr_t> symbols(uintptr_t image_base);
 		/// <summary>
 		/// Walks through the build info in this PDB file and returns all source file paths.
 		/// </summary>
-		std::vector<std::string> buildtools();
 		std::vector<std::string> sourcefiles();
 		/// <summary>
 		/// Returns the hash table of names found in the PDB file.

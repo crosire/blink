@@ -739,7 +739,7 @@ std::vector<blink::type> blink::pdb_reader::types()
 	return types;
 }
 
-std::unordered_map<std::string, ptrdiff_t> blink::pdb_reader::symbols()
+std::unordered_map<std::string, uintptr_t> blink::pdb_reader::symbols(uintptr_t image_base)
 {
 	// Read debug info (DBI stream)
 	msf_stream_reader stream(msf_reader::stream(3));
@@ -764,7 +764,7 @@ std::unordered_map<std::string, ptrdiff_t> blink::pdb_reader::symbols()
 
 	// Read symbol table
 	stream = msf_reader::stream(dbiheader.symbol_record_stream);
-	std::unordered_map<std::string, ptrdiff_t> symbols;
+	std::unordered_map<std::string, uintptr_t> symbols;
 
 	// A list of records in CodeView format
 	while (stream.tell() < stream.size())
@@ -795,13 +795,9 @@ std::unordered_map<std::string, ptrdiff_t> blink::pdb_reader::symbols()
 				const auto mangled_name = stream.read<std::string>();
 
 				if (info.segment == 0 || info.segment > sections.size())
-				{
-					symbols[mangled_name] = 0;
-				}
+					symbols[mangled_name] = info.offset; // Relative address
 				else
-				{
-					symbols[mangled_name] = info.offset + sections[info.segment - 1].virtual_address;
-				}
+					symbols[mangled_name] = image_base + info.offset + sections[info.segment - 1].virtual_address; // Absolute address
 				break;
 			}
 		}

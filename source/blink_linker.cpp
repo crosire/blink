@@ -354,7 +354,7 @@ bool blink::application::link(const std::string &path)
 			switch (relocation.Type)
 			{
 #ifdef _M_IX86
-				// Ignore this relocation
+				// No relocation necessary
 				case IMAGE_REL_I386_ABSOLUTE:
 					break;
 				// Absolute virtual address
@@ -369,13 +369,10 @@ bool blink::application::link(const std::string &path)
 				case IMAGE_REL_I386_REL32:
 					*reinterpret_cast< int32_t *>(relocation_address) = target_address - (relocation_address + 4);
 					break;
-				case IMAGE_REL_I386_SECTION:
-					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
-					//*reinterpret_cast<uint16_t *>(relocation_address) = symbols[relocation.SymbolTableIndex].SectionNumber - 1;
-					break;
 				case IMAGE_REL_I386_SECREL:
 					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
 					//*reinterpret_cast< int32_t *>(relocation_address) = target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData);
+					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // This was found by comparing generated ASM
 					break;
 #endif
 #ifdef _M_AMD64
@@ -403,19 +400,15 @@ bool blink::application::link(const std::string &path)
 					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
 					break;
-				case IMAGE_REL_AMD64_SECTION:
-					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
-					//*reinterpret_cast<uint16_t *>(relocation_address) = symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1;
-					break;
 				case IMAGE_REL_AMD64_SECREL:
 					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
 					//assert(target_address - _imagebase == static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "Address overflow in relative relocation.");
 					//*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData));
+					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF;
 					break;
 #endif
 				default:
 					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
-					__debugbreak();
 					break;
 			}
 		}

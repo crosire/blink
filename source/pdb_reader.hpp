@@ -82,7 +82,7 @@ namespace blink
 		/// <summary>
 		/// Walks through all symbols in this PDB file and returns them.
 		/// </summary>
-		std::unordered_map<std::string, ptrdiff_t> symbols();
+		std::unordered_map<std::string, uintptr_t> symbols(uintptr_t image_base);
 		/// <summary>
 		/// Walks through the build info in this PDB file and returns all source file paths.
 		/// </summary>

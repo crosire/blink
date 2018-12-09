@@ -106,9 +106,9 @@ blink::application::application() :
 		// Check if the debug information actually matches the executable
 		if (pdb.guid() == pdb_guid)
 		{
-			for (const auto &symbol : pdb.symbols())
+			for (const auto &symbol : pdb.symbols(reinterpret_cast<uintptr_t>(_imagebase)))
 			{
-				_symbols.insert({ symbol.first, _imagebase + symbol.second });
+				_symbols.insert({ symbol.first, reinterpret_cast<void *>(symbol.second) });
 			}
 
 			_source_files = pdb.sourcefiles();

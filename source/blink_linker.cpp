@@ -38,49 +38,6 @@ static void write_jump(uint8_t *address, const uint8_t *jump_target)
 #endif
 }
 
-static size_t additional_data_size(HANDLE file)
-{
-	IMAGE_FILE_HEADER header;
-	DWORD read = 0, size = sizeof(header);
-
-	if (!ReadFile(file, &header, size, &read, nullptr) || read != size)
-	{
-		SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-		return 0;
-	}
-
-	SetFilePointer(file, header.SizeOfOptionalHeader, nullptr, FILE_CURRENT);
-
-	size = header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER);
-	const auto sections = static_cast<IMAGE_SECTION_HEADER *>(alloca(size));
-
-	if (!ReadFile(file, sections, size, &read, nullptr) || read != size)
-	{
-		SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-		return 0;
-	}
-
-	SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-
-	size = 0;
-
-	for (unsigned int i = 0; i < header.NumberOfSections; i++)
-	{
-		if (sections[i].PointerToRawData == 0 && sections[i].Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
-		{
-			size += sections[i].SizeOfRawData;
-		}
-#ifdef _M_AMD64
-		else if (sections[i].Characteristics & IMAGE_SCN_CNT_CODE)
-		{
-			size += sections[i].NumberOfRelocations * 12;
-		}
-#endif
-	}
-
-	return size;
-}
-
 static uint8_t *find_free_memory_region(uint8_t *address, size_t size)
 {
 #ifdef _M_AMD64
@@ -117,19 +74,32 @@ static uint8_t *find_free_memory_region(uint8_t *address, size_t size)
 	return nullptr;
 }
 
-struct thread_scope_guard
+struct scoped_handle
 {
-	HANDLE snapshot;
+	HANDLE handle;
 
-	thread_scope_guard() :
-		snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0))
+	scoped_handle(HANDLE handle) :
+		handle(handle)
 	{
-		if (snapshot == INVALID_HANDLE_VALUE)
+	}
+	~scoped_handle()
+	{
+		CloseHandle(handle);
+	}
+
+	operator HANDLE() const { return handle; }
+};
+struct thread_scope_guard : scoped_handle
+{
+	thread_scope_guard() :
+		scoped_handle(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0))
+	{
+		if (handle == INVALID_HANDLE_VALUE)
 			return;
 
 		THREADENTRY32 te = { sizeof(te) };
 
-		if (Thread32First(snapshot, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
+		if (Thread32First(handle, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
 		{
 			do
 			{
@@ -144,17 +114,17 @@ struct thread_scope_guard
 				SuspendThread(thread);
 				CloseHandle(thread);
 			}
-			while (Thread32Next(snapshot, &te));
+			while (Thread32Next(handle, &te));
 		}
 	}
 	~thread_scope_guard()
 	{
-		if (snapshot == INVALID_HANDLE_VALUE)
+		if (handle == INVALID_HANDLE_VALUE)
 			return;
 
 		THREADENTRY32 te = { sizeof(te) };
 
-		if (Thread32First(snapshot, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
+		if (Thread32First(handle, &te) && te.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(te.th32ThreadID))
 		{
 			do
 			{
@@ -169,10 +139,8 @@ struct thread_scope_guard
 				ResumeThread(thread);
 				CloseHandle(thread);
 			}
-			while (Thread32Next(snapshot, &te));
+			while (Thread32Next(handle, &te));
 		}
-
-		CloseHandle(snapshot);
 	}
 };
 
@@ -180,7 +148,7 @@ bool blink::application::link(const std::string &path)
 {
 	thread_scope_guard _scope_guard_;
 
-	const HANDLE file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	const scoped_handle file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
 	if (file == INVALID_HANDLE_VALUE)
 	{
@@ -188,35 +156,11 @@ bool blink::application::link(const std::string &path)
 		return false;
 	}
 
-	DWORD modulesize = GetFileSize(file, nullptr), modulesize_read = 0;
-	const size_t allocsize = modulesize + additional_data_size(file);
+	// Read COFF header from input file and check that it is of a valid format
+	IMAGE_FILE_HEADER header;
 
-	// Allocate executable memory region close to the executable image base.
-	// Successfully loaded object files are never deallocated again to avoid corrupting the function rerouting generated below.
-	// The virtual memory is freed at process exit by Windows.
-	const auto modulebase = static_cast<uint8_t *>(VirtualAlloc(find_free_memory_region(_imagebase, allocsize), allocsize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
-
-	if (modulebase == nullptr)
-	{
-		CloseHandle(file);
-
-		print("Failed to allocate executable memory region.");
+	if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
 		return false;
-	}
-
-	// Read object file into memory region
-	ReadFile(file, modulebase, modulesize, &modulesize_read, nullptr);
-	CloseHandle(file);
-
-	if (modulesize_read < modulesize)
-	{
-		VirtualFree(modulebase, modulesize, MEM_RELEASE);
-
-		print("Failed to read data from input file.");
-		return false;
-	}
-
-	const IMAGE_FILE_HEADER &header = *reinterpret_cast<const IMAGE_FILE_HEADER *>(modulebase);
 
 #ifdef _M_IX86
 	if (header.Machine != IMAGE_FILE_MACHINE_I386)
@@ -225,41 +169,102 @@ bool blink::application::link(const std::string &path)
 	if (header.Machine != IMAGE_FILE_MACHINE_AMD64)
 #endif
 	{
-		VirtualFree(modulebase, modulesize, MEM_RELEASE);
-
 		print("Input file is not of a valid format or was compiled for a different processor architecture.");
 		return false;
 	}
 
-	auto additional_data_base = modulebase + modulesize;
-	const auto symbol_table_base = reinterpret_cast<const IMAGE_SYMBOL *>(modulebase + header.PointerToSymbolTable);
-	const auto section_header_base = reinterpret_cast<IMAGE_SECTION_HEADER *>(modulebase + sizeof(IMAGE_FILE_HEADER) + header.SizeOfOptionalHeader);
-	std::vector<uint8_t *> local_symbol_addresses(header.NumberOfSymbols);
-	std::vector<std::pair<uint8_t *, const uint8_t *>> image_function_relocations;
+	const auto string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
 
-	// Allocate uninitialized data sections
-	for (unsigned int i = 0; i < header.NumberOfSections; i++)
+	// Read symbol + string table and section headers from input file
+	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols + string_table_size / sizeof(IMAGE_SYMBOL));
+	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
+	if (DWORD read; !ReadFile(file, symbols.data(), symbols.size() * sizeof(IMAGE_SYMBOL), &read, nullptr))
+		return false;
+
+	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
+	SetFilePointer(file, sizeof(IMAGE_FILE_HEADER) + header.SizeOfOptionalHeader, nullptr, FILE_BEGIN);
+	if (DWORD read; !ReadFile(file, sections.data(), sections.size() * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+		return false;
+
+	// Calculate total module size
+	SIZE_T allocated_module_size = 0;
+
+	for (const IMAGE_SECTION_HEADER &section : sections)
 	{
-		IMAGE_SECTION_HEADER &section = section_header_base[i];
+		// Add space for section data and potential alignment
+		allocated_module_size += 256 + section.SizeOfRawData + section.NumberOfRelocations * sizeof(IMAGE_RELOCATION);
 
-		if (section.PointerToRawData == 0 && section.Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
+#ifdef _M_AMD64
+		// Add space for relay thunk
+		if (section.Characteristics & IMAGE_SCN_CNT_CODE)
+			allocated_module_size += section.NumberOfRelocations * 12;
+#endif
+	}
+
+	// Allocate executable memory region close to the executable image base.
+	// Successfully loaded object files are never deallocated again to avoid corrupting the function rerouting generated below. The virtual memory is freed at process exit by Windows.
+	const auto module_base = static_cast<BYTE *>(VirtualAlloc(find_free_memory_region(_imagebase, allocated_module_size), allocated_module_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+
+	if (module_base == nullptr)
+	{
+		print("Failed to allocate executable memory region.");
+		return false;
+	}
+
+	// Initialize sections
+	auto section_base = module_base;
+
+	for (IMAGE_SECTION_HEADER &section : sections)
+	{
+		// Skip over all sections that do not need linking
+		if (section.Characteristics & (IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE))
 		{
-			assert(additional_data_base + section.SizeOfRawData <= modulebase + allocsize && "Additional data allocated is not big enough.");
-
-			// Memory was already initialized to zero by VirtualAlloc
-			section.PointerToRawData = static_cast<DWORD>(additional_data_base - modulebase);
-
-			additional_data_base += section.SizeOfRawData;
+			section.NumberOfRelocations = 0; // Ensure that these are not handled by relocation below
+			continue;
 		}
+
+		// Check section alignment
+		DWORD alignment = section.Characteristics & IMAGE_SCN_ALIGN_MASK;
+		alignment = alignment ? 1 << ((alignment >> 20) - 1) : 1;
+
+		// Align section memory base pointer to its required alignment
+		section_base = reinterpret_cast<BYTE *>((reinterpret_cast<UINT_PTR>(section_base) + (alignment - 1)) & ~(alignment - 1));
+
+		// Uninitialized sections do not have any data attached and they were already zeroed by 'VirtualAlloc', so skip them here
+		if (section.PointerToRawData != 0)
+		{
+			SetFilePointer(file, section.PointerToRawData, nullptr, FILE_BEGIN);
+
+			if (DWORD read; !ReadFile(file, section_base, section.SizeOfRawData, &read, nullptr))
+				return false;
+		}
+
+		section.PointerToRawData = section_base - module_base;
+		section_base += section.SizeOfRawData;
+
+		// Read any relocation data attached to this section
+		if (section.PointerToRelocations != 0)
+		{
+			SetFilePointer(file, section.PointerToRelocations, nullptr, FILE_BEGIN);
+
+			if (DWORD read; !ReadFile(file, section_base, section.NumberOfRelocations * sizeof(IMAGE_RELOCATION), &read, nullptr))
+				return false;
+		}
+
+		section.PointerToRelocations = section_base - module_base;
+		section_base += section.NumberOfRelocations * sizeof(IMAGE_RELOCATION);
 	}
 
 	// Resolve internal and external symbols
+	std::vector<BYTE *> local_symbol_addresses(header.NumberOfSymbols);
+	std::vector<std::pair<BYTE *, const BYTE *>> image_function_relocations;
+
 	for (unsigned int i = 0; i < header.NumberOfSymbols; i++)
 	{
-		uint8_t *target_address = nullptr;
-		const IMAGE_SYMBOL &symbol = symbol_table_base[i];
+		BYTE *target_address = nullptr;
+		const IMAGE_SYMBOL &symbol = symbols[i];
 		const auto symbol_name = symbol.N.Name.Short == 0 ?
-			std::string(reinterpret_cast<const char *>(symbol_table_base + header.NumberOfSymbols) + symbol.N.Name.Long) :
+			std::string(reinterpret_cast<const char *>(symbols.data() + header.NumberOfSymbols) + symbol.N.Name.Long) :
 			std::string(reinterpret_cast<const char *>(symbol.N.ShortName), strnlen(reinterpret_cast<const char *>(symbol.N.ShortName), IMAGE_SIZEOF_SHORT_NAME));
 		const auto symbol_table_lookup = _symbols.find(symbol_name);
 
@@ -267,31 +272,31 @@ bool blink::application::link(const std::string &path)
 		{
 			if (symbol_table_lookup == _symbols.end())
 			{
-				VirtualFree(modulebase, modulesize, MEM_RELEASE);
+				VirtualFree(module_base, 0, MEM_RELEASE);
 
 				print("Unresolved external symbol '" + symbol_name + "'.");
 				return false;
 			}
 
-			target_address = static_cast<uint8_t *>(symbol_table_lookup->second);
+			target_address = static_cast<BYTE *>(symbol_table_lookup->second);
 		}
 		else if (symbol.StorageClass == IMAGE_SYM_CLASS_WEAK_EXTERNAL)
 		{
 			if (symbol_table_lookup != _symbols.end())
 			{
-				target_address = static_cast<uint8_t *>(symbol_table_lookup->second);
+				target_address = static_cast<BYTE *>(symbol_table_lookup->second);
 			}
 			else if (symbol.NumberOfAuxSymbols != 0)
 			{
-				const auto auxsymbol = reinterpret_cast<const IMAGE_AUX_SYMBOL_EX &>(symbol_table_base[i + 1]).Sym;
+				const auto aux_symbol = reinterpret_cast<const IMAGE_AUX_SYMBOL_EX &>(symbols[i + 1]).Sym;
 
-				assert(auxsymbol.WeakDefaultSymIndex < i && "Unexpected symbol ordering for weak external symbol.");
+				assert(aux_symbol.WeakDefaultSymIndex < i && "Unexpected symbol ordering for weak external symbol.");
 
-				target_address = local_symbol_addresses[auxsymbol.WeakDefaultSymIndex];
+				target_address = local_symbol_addresses[aux_symbol.WeakDefaultSymIndex];
 			}
 			else
 			{
-				VirtualFree(modulebase, modulesize, MEM_RELEASE);
+				VirtualFree(module_base, 0, MEM_RELEASE);
 
 				print("Unresolved weak external symbol '" + symbol_name + "'.");
 				return false;
@@ -299,12 +304,12 @@ bool blink::application::link(const std::string &path)
 		}
 		else if (symbol.SectionNumber > IMAGE_SYM_UNDEFINED)
 		{
-			const IMAGE_SECTION_HEADER &section = section_header_base[symbol.SectionNumber - 1];
-			target_address = modulebase + section.PointerToRawData + symbol.Value;
+			const IMAGE_SECTION_HEADER &section = sections[symbol.SectionNumber - 1];
+			target_address = module_base + section.PointerToRawData + symbol.Value;
 
 			if (symbol_table_lookup != _symbols.end() && symbol_name != reinterpret_cast<const char(&)[]>(section.Name))
 			{
-				const auto old_address = static_cast<uint8_t *>(symbol_table_lookup->second);
+				const auto old_address = static_cast<BYTE *>(symbol_table_lookup->second);
 
 				if (ISFCN(symbol.Type))
 				{
@@ -323,71 +328,73 @@ bool blink::application::link(const std::string &path)
 		i += symbol.NumberOfAuxSymbols;
 	}
 
-	// Perform linking
-	for (unsigned int i = 0; i < header.NumberOfSections; i++)
+	// Perform relocation on each section
+	for (const IMAGE_SECTION_HEADER &section : sections)
 	{
-		const IMAGE_SECTION_HEADER &section = section_header_base[i];
+		const auto section_relocation_table = reinterpret_cast<const IMAGE_RELOCATION *>(module_base + section.PointerToRelocations);
 
-		// Skip over all sections that do not contain code
-		if (section.Characteristics & (IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE) || (section.Characteristics & IMAGE_SCN_CNT_CODE) == 0)
-			continue;
-
-		const auto section_relocation_table = reinterpret_cast<const IMAGE_RELOCATION *>(modulebase + section.PointerToRelocations);
-
-		for (unsigned int k = 0; k < section.NumberOfRelocations; k++)
+		for (unsigned int k = 0; k < section.NumberOfRelocations; ++k)
 		{
 			const IMAGE_RELOCATION &relocation = section_relocation_table[k];
-			const auto relocation_address = modulebase + section.PointerToRawData + section.VirtualAddress + relocation.VirtualAddress;
+			const auto relocation_address = module_base + section.PointerToRawData + section.VirtualAddress + relocation.VirtualAddress;
 			auto target_address = local_symbol_addresses[relocation.SymbolTableIndex];
 
 #ifdef _M_AMD64
 			// Add relay thunk if distance to target exceeds 32-bit range
-			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbol_table_base[relocation.SymbolTableIndex].Type))
+			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbols[relocation.SymbolTableIndex].Type))
 			{
-				assert(additional_data_base + 12 < modulebase + allocsize && "Additional data allocated is not big enough.");
+				assert(section_base + 12 < allocated_module_size && "Additional data allocated is not big enough.");
 
-				write_jump(additional_data_base, target_address);
+				write_jump(section_base, target_address);
 
-				target_address = additional_data_base;
-				additional_data_base += 12;
+				target_address = section_base;
+				section_base += 12;
 			}
 #endif
-
-			// Update relocations
 			switch (relocation.Type)
 			{
 #ifdef _M_IX86
-				case IMAGE_REL_I386_ABSOLUTE: // ignored
+				// Ignore this relocation
+				case IMAGE_REL_I386_ABSOLUTE:
 					break;
-				case IMAGE_REL_I386_DIR32: // absolute virtual address
+				// Absolute virtual address
+				case IMAGE_REL_I386_DIR32:
 					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
 					break;
-				case IMAGE_REL_I386_DIR32NB: // target relative to __ImageBase
+				// Relative virtual address to __ImageBase
+				case IMAGE_REL_I386_DIR32NB:
 					*reinterpret_cast< int32_t *>(relocation_address) = target_address - _imagebase;
 					break;
-				case IMAGE_REL_I386_REL32: // target relative to next instruction after relocation
+				// Relative to next instruction after relocation
+				case IMAGE_REL_I386_REL32:
 					*reinterpret_cast< int32_t *>(relocation_address) = target_address - (relocation_address + 4);
 					break;
-				case IMAGE_REL_I386_SECTION: // target section index
-					*reinterpret_cast<uint16_t *>(relocation_address) = symbol_table_base[relocation.SymbolTableIndex].SectionNumber;
+				case IMAGE_REL_I386_SECTION:
+					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
+					//*reinterpret_cast<uint16_t *>(relocation_address) = symbols[relocation.SymbolTableIndex].SectionNumber - 1;
 					break;
 				case IMAGE_REL_I386_SECREL:
-					*reinterpret_cast< int32_t *>(relocation_address) = target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData);
+					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
+					//*reinterpret_cast< int32_t *>(relocation_address) = target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData);
 					break;
 #endif
 #ifdef _M_AMD64
-				case IMAGE_REL_AMD64_ADDR64: // absolute virtual address
+				// Absolute virtual 64-bit address
+				case IMAGE_REL_AMD64_ADDR64:
 					*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
 					break;
-				case IMAGE_REL_AMD64_ADDR32: // absolute virtual address
+				// Absolute virtual 32-bit address
+				case IMAGE_REL_AMD64_ADDR32:
 					assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
 					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
 					break;
-				case IMAGE_REL_AMD64_ADDR32NB: // target relative to __ImageBase
+				// Relative virtual address to __ImageBase
+				case IMAGE_REL_AMD64_ADDR32NB:
 					assert(target_address - _imagebase == static_cast<int32_t>(target_address - _imagebase) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _imagebase);
 					break;
-				case IMAGE_REL_AMD64_REL32: // target relative to next instruction after relocation
+				// Relative virtual address to next instruction after relocation
+				case IMAGE_REL_AMD64_REL32:
 				case IMAGE_REL_AMD64_REL32_1:
 				case IMAGE_REL_AMD64_REL32_2:
 				case IMAGE_REL_AMD64_REL32_3:
@@ -396,12 +403,14 @@ bool blink::application::link(const std::string &path)
 					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
 					break;
-				case IMAGE_REL_AMD64_SECTION: // target section index
-					*reinterpret_cast<uint16_t *>(relocation_address) = symbol_table_base[relocation.SymbolTableIndex].SectionNumber;
+				case IMAGE_REL_AMD64_SECTION:
+					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
+					//*reinterpret_cast<uint16_t *>(relocation_address) = symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1;
 					break;
 				case IMAGE_REL_AMD64_SECREL:
-					assert(target_address - _imagebase == static_cast<int32_t>(target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (modulebase + section_header_base[symbol_table_base[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData));
+					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
+					//assert(target_address - _imagebase == static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "Address overflow in relative relocation.");
+					//*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData));
 					break;
 #endif
 				default:
@@ -416,7 +425,7 @@ bool blink::application::link(const std::string &path)
 	for (const auto &relocation : image_function_relocations)
 		write_jump(relocation.first, relocation.second);
 
-	FlushInstructionCache(GetCurrentProcess(), modulebase, modulesize);
+	FlushInstructionCache(GetCurrentProcess(), module_base, allocated_module_size);
 
 	print("Successfully linked object file into executable image.");
 

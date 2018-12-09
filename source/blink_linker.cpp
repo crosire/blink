@@ -217,7 +217,7 @@ bool blink::application::link(const std::string &path)
 	for (IMAGE_SECTION_HEADER &section : sections)
 	{
 		// Skip over all sections that do not need linking
-		if (section.Characteristics & (IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE))
+		if (section.Characteristics & (IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE))
 		{
 			section.NumberOfRelocations = 0; // Ensure that these are not handled by relocation below
 			continue;
@@ -253,6 +253,38 @@ bool blink::application::link(const std::string &path)
 
 		section.PointerToRelocations = static_cast<DWORD>(section_base - module_base);
 		section_base += section.NumberOfRelocations * sizeof(IMAGE_RELOCATION);
+
+#if 0
+		// Protect section memory with requested protection flags
+		DWORD protect = PAGE_NOACCESS;
+
+		switch (section.Characteristics & (IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE))
+		{
+		case IMAGE_SCN_MEM_READ:
+			protect = PAGE_READONLY;
+			break;
+		case IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE:
+			protect = PAGE_READWRITE;
+			break;
+		case IMAGE_SCN_MEM_EXECUTE:
+			protect = PAGE_EXECUTE;
+			break;
+		case IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ:
+			protect = PAGE_EXECUTE_READ;
+			break;
+		case IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE:
+			protect = PAGE_EXECUTE_READWRITE;
+			break;
+		}
+
+		if (section.Characteristics & IMAGE_SCN_MEM_NOT_CACHED)
+			protect |= PAGE_NOCACHE;
+
+		if (!VirtualProtect(module_base + section.PointerToRawData, section.SizeOfRawData, protect, &protect))
+		{
+			print("Failed to protect section '" + std::string(reinterpret_cast<const char(&)[]>(section.Name)) + "'.");
+		}
+#endif
 	}
 
 	// Resolve internal and external symbols

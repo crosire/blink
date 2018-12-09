@@ -136,7 +136,7 @@ blink::pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 	_is_valid = stream_count() > 4;
 }
 
-std::unordered_map<std::string, uintptr_t> blink::pdb_reader::symbols(uintptr_t image_base)
+std::unordered_map<std::string, void *> blink::pdb_reader::symbols(uint8_t *image_base)
 {
 	// Read debug info (DBI stream)
 	msf_stream_reader stream(msf_reader::stream(3));
@@ -161,7 +161,7 @@ std::unordered_map<std::string, uintptr_t> blink::pdb_reader::symbols(uintptr_t 
 
 	// Read symbol table
 	stream = msf_reader::stream(dbiheader.symbol_record_stream);
-	std::unordered_map<std::string, uintptr_t> symbols;
+	std::unordered_map<std::string, void *> symbols;
 
 	// A list of records in CodeView format
 	while (stream.tell() < stream.size())
@@ -190,7 +190,7 @@ std::unordered_map<std::string, uintptr_t> blink::pdb_reader::symbols(uintptr_t 
 			const auto mangled_name = stream.read<std::string>();
 
 			if (info.segment == 0 || info.segment > sections.size())
-				symbols[mangled_name] = info.offset; // Relative address
+				symbols[mangled_name] = reinterpret_cast<void *>(static_cast<uintptr_t>(info.offset)); // Relative address
 			else
 				symbols[mangled_name] = image_base + info.offset + sections[info.segment - 1].virtual_address; // Absolute address
 		}

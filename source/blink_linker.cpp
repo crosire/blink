@@ -5,8 +5,6 @@
 
 #include "blink.hpp"
 #include <assert.h>
-#include <vector>
-#include <algorithm>
 #include <Windows.h>
 #include <TlHelp32.h>
 
@@ -41,28 +39,22 @@ static void write_jump(uint8_t *address, const uint8_t *jump_target)
 static uint8_t *find_free_memory_region(uint8_t *address, size_t size)
 {
 #ifdef _M_AMD64
-	uint8_t *maxaddress;
 	SYSTEM_INFO sysinfo;
 	MEMORY_BASIC_INFORMATION meminfo;
-
 	GetSystemInfo(&sysinfo);
 
 	address -= reinterpret_cast<uintptr_t>(address) % sysinfo.dwAllocationGranularity;
 	address += sysinfo.dwAllocationGranularity;
-	maxaddress = static_cast<uint8_t *>(sysinfo.lpMaximumApplicationAddress);
+	auto maxaddress = static_cast<uint8_t *>(sysinfo.lpMaximumApplicationAddress);
 	maxaddress -= size;
 
 	while (address < maxaddress)
 	{
-		if (VirtualQuery(address, &meminfo, sizeof(MEMORY_BASIC_INFORMATION)) == 0)
-		{
+		if (VirtualQuery(address, &meminfo, sizeof(meminfo)) == 0)
 			break;
-		}
 
 		if (meminfo.State == MEM_FREE)
-		{
 			return address;
-		}
 
 		address = static_cast<uint8_t *>(meminfo.BaseAddress) + meminfo.RegionSize;
 
@@ -79,16 +71,12 @@ struct scoped_handle
 	HANDLE handle;
 
 	scoped_handle(HANDLE handle) :
-		handle(handle)
-	{
-	}
-	~scoped_handle()
-	{
-		CloseHandle(handle);
-	}
+		handle(handle) { }
+	~scoped_handle() { if (handle != NULL && handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
 
 	operator HANDLE() const { return handle; }
 };
+
 struct thread_scope_guard : scoped_handle
 {
 	thread_scope_guard() :
@@ -106,13 +94,12 @@ struct thread_scope_guard : scoped_handle
 				if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId())
 					continue; // Do not suspend the current thread (which belongs to blink)
 
-				const HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+				const scoped_handle thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
 
 				if (thread == nullptr)
 					continue;
 
 				SuspendThread(thread);
-				CloseHandle(thread);
 			}
 			while (Thread32Next(handle, &te));
 		}
@@ -131,13 +118,12 @@ struct thread_scope_guard : scoped_handle
 				if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId())
 					continue;
 
-				const HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+				const scoped_handle thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
 
 				if (thread == nullptr)
 					continue;
 
 				ResumeThread(thread);
-				CloseHandle(thread);
 			}
 			while (Thread32Next(handle, &te));
 		}
@@ -203,7 +189,7 @@ bool blink::application::link(const std::string &path)
 
 	// Allocate executable memory region close to the executable image base.
 	// Successfully loaded object files are never deallocated again to avoid corrupting the function rerouting generated below. The virtual memory is freed at process exit by Windows.
-	const auto module_base = static_cast<BYTE *>(VirtualAlloc(find_free_memory_region(_imagebase, allocated_module_size), allocated_module_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+	const auto module_base = static_cast<BYTE *>(VirtualAlloc(find_free_memory_region(_image_base, allocated_module_size), allocated_module_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
 
 	if (module_base == nullptr)
 	{
@@ -281,9 +267,7 @@ bool blink::application::link(const std::string &path)
 			protect |= PAGE_NOCACHE;
 
 		if (!VirtualProtect(module_base + section.PointerToRawData, section.SizeOfRawData, protect, &protect))
-		{
 			print("Failed to protect section '" + std::string(reinterpret_cast<const char(&)[]>(section.Name)) + "'.");
-		}
 #endif
 	}
 
@@ -393,16 +377,14 @@ bool blink::application::link(const std::string &path)
 					break;
 				// Relative virtual address to __ImageBase
 				case IMAGE_REL_I386_DIR32NB:
-					*reinterpret_cast< int32_t *>(relocation_address) = target_address - _imagebase;
+					*reinterpret_cast< int32_t *>(relocation_address) = target_address - _image_base;
 					break;
 				// Relative to next instruction after relocation
 				case IMAGE_REL_I386_REL32:
 					*reinterpret_cast< int32_t *>(relocation_address) = target_address - (relocation_address + 4);
 					break;
 				case IMAGE_REL_I386_SECREL:
-					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
-					//*reinterpret_cast< int32_t *>(relocation_address) = target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData);
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // This was found by comparing generated ASM
+					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
 					break;
 #endif
 #ifdef _M_AMD64
@@ -417,8 +399,8 @@ bool blink::application::link(const std::string &path)
 					break;
 				// Relative virtual address to __ImageBase
 				case IMAGE_REL_AMD64_ADDR32NB:
-					assert(target_address - _imagebase == static_cast<int32_t>(target_address - _imagebase) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _imagebase);
+					assert(target_address - _image_base == static_cast<int32_t>(target_address - _image_base) && "Address overflow in relative relocation.");
+					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _image_base);
 					break;
 				// Relative virtual address to next instruction after relocation
 				case IMAGE_REL_AMD64_REL32:
@@ -431,10 +413,7 @@ bool blink::application::link(const std::string &path)
 					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
 					break;
 				case IMAGE_REL_AMD64_SECREL:
-					//assert(symbols[relocation.SymbolTableIndex].SectionNumber > 0);
-					//assert(target_address - _imagebase == static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData)) && "Address overflow in relative relocation.");
-					//*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (module_base + sections[symbols[relocation.SymbolTableIndex].SectionNumber - 1].PointerToRawData));
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF;
+					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
 					break;
 #endif
 				default:

@@ -30,13 +30,13 @@ namespace blink
 		bool link(const std::string &path);
 
 	private:
-		uint8_t *_imagebase = nullptr;
+		uint8_t *_image_base = nullptr;
+		std::vector<std::string> _defines;
 		std::vector<std::string> _source_files;
 		std::unordered_set<std::string> _include_dirs;
 		std::unordered_map<std::string, void *> _symbols;
 		std::unique_ptr<class file_watcher> _watcher;
 		std::string _source_dir, _compiled_module_file;
-		bool _initialized, _executing;
 		void *_compiler_stdin, *_compiler_stdout;
 	};
 }

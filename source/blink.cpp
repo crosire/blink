@@ -33,6 +33,8 @@ static std::string longest_path(const std::vector<std::string> &paths)
 			length = l;
 	}
 
+	length = paths[0].find_last_of("\\/", length);
+
 	return paths[0].substr(0, length);
 }
 

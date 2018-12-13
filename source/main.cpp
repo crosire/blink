@@ -126,7 +126,7 @@ int main(int argc, char *argv[])
 			if (!CreateProcessA(nullptr, const_cast<char *>(command_line.data()), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
 				std::cout << "Failed to start target application process!" << std::endl;
-				return 1;
+				return GetLastError();
 			}
 
 			pid = process_info.dwProcessId;
@@ -143,14 +143,14 @@ int main(int argc, char *argv[])
 	}
 
 	// Open target application process
-	const DWORD access = PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION;
+	const DWORD access = PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION;
 	const HANDLE local_process = GetCurrentProcess();
 	const HANDLE remote_process = OpenProcess(access, FALSE, pid);
 
 	if (remote_process == nullptr)
 	{
 		std::cout << "Failed to open target application process!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	BOOL local_is_wow64 = FALSE, remote_is_wow64 = FALSE;
@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
 		CloseHandle(remote_process);
 
 		std::cout << "Machine architecture mismatch between target application and this application!" << std::endl;
-		return 2;
+		return ERROR_BAD_ENVIRONMENT;
 	}
 
 	std::cout << "Launching in target application ..." << std::endl;
@@ -173,12 +173,12 @@ int main(int argc, char *argv[])
 	if (!CreatePipe(&local_pipe, &console, nullptr, 512) || !DuplicateHandle(local_process, console, remote_process, &console, 0, FALSE, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS))
 	{
 		std::cout << "Failed to create new communication pipe!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	MODULEINFO moduleinfo;
 	if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(nullptr), &moduleinfo, sizeof(moduleinfo)))
-		return 1;
+		return GetLastError();
 
 #ifdef _DEBUG // Use 'LoadLibrary' to create image in target application so that debug information is loaded
 	TCHAR load_path[MAX_PATH];
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
 	if (load_param == nullptr || !WriteProcessMemory(remote_process, load_param, load_path, MAX_PATH, nullptr))
 	{
 		std::cout << "Failed to allocate and write 'LoadLibrary' argument in target application!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	// Execute 'LoadLibrary' in target application
@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
 	if (load_thread == nullptr)
 	{
 		std::cout << "Failed to execute 'LoadLibrary' in target application!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	// Wait for loading to finish and clean up parameter memory afterwards
@@ -237,7 +237,7 @@ int main(int argc, char *argv[])
 	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, nullptr))
 	{
 		std::cout << "Failed to allocate and write image in target application!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	// Launch module main entry point in target application
@@ -248,7 +248,7 @@ int main(int argc, char *argv[])
 	if (remote_thread == nullptr)
 	{
 		std::cout << "Failed to launch remote thread in target application!" << std::endl;
-		return 1;
+		return GetLastError();
 	}
 
 	// Run main loop and pass on incoming messages to console
@@ -267,12 +267,10 @@ int main(int argc, char *argv[])
 	GetExitCodeThread(remote_thread, &exitcode);
 	GetExitCodeProcess(remote_process, &remote_exitcode);
 
-	// Clean up handles
 	CloseHandle(local_pipe);
 	CloseHandle(remote_thread);
 	CloseHandle(remote_process);
 
-	// Exit
 	std::cout << "The target application has exited with code " << remote_exitcode << "." << std::endl;
 
 	return static_cast<int>(exitcode);

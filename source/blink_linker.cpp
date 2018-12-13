@@ -130,11 +130,11 @@ struct thread_scope_guard : scoped_handle
 	}
 };
 
-bool blink::application::link(const std::string &path)
+bool blink::application::link(const std::filesystem::path &path)
 {
 	thread_scope_guard _scope_guard_;
 
-	const scoped_handle file = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	const scoped_handle file = CreateFileW(path.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
 	if (file == INVALID_HANDLE_VALUE)
 	{

@@ -5,55 +5,38 @@
 
 #include "blink.hpp"
 #include "pdb_reader.hpp"
-#include "file_watcher.hpp"
 #include <string>
-#include <atomic>
-#include <unordered_map>
 #include <algorithm>
+#include <unordered_map>
 #include <Windows.h>
 
-static std::string longest_path(const std::vector<std::string> &paths)
+static std::filesystem::path longest_path(const std::vector<std::filesystem::path> &paths)
 {
 	if (paths.empty())
-		return std::string();
+		return std::filesystem::path();
 
-	size_t length = paths[0].length();
+	const std::wstring base_path = paths[0].parent_path().native() + std::filesystem::path::preferred_separator;
+	size_t length = base_path.size();
 
-	for (auto it = paths.cbegin(); it != paths.cend(); ++it)
-	{
-		if (it->length() < length)
-		{
-			length = it->length();
-			continue;
-		}
+	for (auto it = paths.begin() + 1; it != paths.end(); ++it)
+		length = it->native().size() < length ? it->native().size() : std::min(length, static_cast<size_t>(
+			std::distance(base_path.begin(),
+				std::mismatch(base_path.begin(), base_path.end(), it->native().begin(), it->native().end()).first)));
 
-		const size_t l = std::mismatch(paths[0].cbegin(), paths[0].cend(), it->cbegin(), it->cend()).first - paths[0].cbegin();
-
-		if (l < length)
-			length = l;
-	}
-
-	length = paths[0].find_last_of("\\/", length);
-
-	return paths[0].substr(0, length);
+	return base_path.substr(0, base_path.rfind(std::filesystem::path::preferred_separator, length != 0 ? length : std::string::npos));
 }
 
-blink::application::application() :
-	_compiler_stdin(INVALID_HANDLE_VALUE),
-	_compiler_stdout(INVALID_HANDLE_VALUE)
+blink::application::application()
 {
 	_image_base = reinterpret_cast<BYTE *>(GetModuleHandle(nullptr));
 
 	_symbols.insert({ "__ImageBase", _image_base });
 }
-blink::application::~application()
-{
-	CloseHandle(_compiler_stdin);
-	CloseHandle(_compiler_stdout);
-}
 
 void blink::application::run()
 {
+	DWORD size = 0;
+
 	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(_image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(_image_base)->e_lfanew);
 
 	{	print("Reading PE import directory ...");
@@ -143,9 +126,10 @@ void blink::application::run()
 			if (pdb.guid() == pdb_guid)
 			{
 				const auto pdb_symbols = pdb.symbols(_image_base);
+				const auto pdb_source_files = pdb.sourcefiles();
 
 				_symbols.insert(pdb_symbols.begin(), pdb_symbols.end());
-				_source_files = pdb.sourcefiles();
+				_source_files.assign(pdb_source_files.begin(), pdb_source_files.end());
 			}
 			else
 			{
@@ -160,25 +144,22 @@ void blink::application::run()
 		}
 	}
 
-	{	std::vector<std::string> cpp_files;
+	{	std::vector<std::filesystem::path> cpp_files;
 
 		for (const auto &path : _source_files)
 		{
-			// Let's add include directories for all source files and their parent folders
+			// Let's add include directories for all source files and their parent folders (two levels up)
 			for (size_t i = 0, offset = std::string::npos; i < 2; ++i, --offset)
 			{
-				offset = path.find_last_of('\\', offset);
+				offset = path.string().find_last_of('\\', offset);
 				if (offset == std::string::npos)
 					break;
-				_include_dirs.insert(path.substr(0, offset));
+				_include_dirs.insert(path.string().substr(0, offset));
 			}
 
-			if (path.find("c:\\program files") == std::string::npos &&
-				path.find("f:\\dd") == std::string::npos &&
-				path.find("d:\\agent\\_work") == std::string::npos &&
-				path.rfind(".cpp") != std::string::npos)
+			if (path.extension() == ".cpp" && std::filesystem::exists(path))
 			{
-				print("  Found source file: " + path);
+				print("  Found source file: " + path.string());
 
 				cpp_files.push_back(path);
 			}
@@ -193,6 +174,9 @@ void blink::application::run()
 		}
 	}
 
+	HANDLE compiler_stdin = INVALID_HANDLE_VALUE;
+	HANDLE compiler_stdout = INVALID_HANDLE_VALUE;
+
 	{	print("Starting compiler process ...");
 
 		// Launch compiler process
@@ -201,26 +185,33 @@ void blink::application::run()
 		SECURITY_ATTRIBUTES sa = { sizeof(sa) };
 		sa.bInheritHandle = TRUE;
 
-		if (!CreatePipe(&si.hStdInput, &_compiler_stdin, &sa, 0))
-			return;
-
-		SetHandleInformation(_compiler_stdin, HANDLE_FLAG_INHERIT, FALSE);
-
-		if (!CreatePipe(&_compiler_stdout, &si.hStdOutput, &sa, 0))
+		if (!CreatePipe(&si.hStdInput, &compiler_stdin, &sa, 0))
 		{
+			print("  Error: Could not create input communication pipe.");
+			return;
+		}
+
+		SetHandleInformation(compiler_stdin, HANDLE_FLAG_INHERIT, FALSE);
+
+		if (!CreatePipe(&compiler_stdout, &si.hStdOutput, &sa, 0))
+		{
+			print("  Error: Could not create output communication pipe.");
+
 			CloseHandle(si.hStdInput);
 			return;
 		}
 
-		SetHandleInformation(_compiler_stdout, HANDLE_FLAG_INHERIT, FALSE);
+		SetHandleInformation(compiler_stdout, HANDLE_FLAG_INHERIT, FALSE);
 
 		si.hStdError = si.hStdOutput;
 
-		TCHAR cmdline[] = TEXT("cmd.exe /q /d");
+		TCHAR cmdline[] = TEXT("cmd.exe /q /d /k @echo off");
 		PROCESS_INFORMATION pi;
 
 		if (!CreateProcess(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
 		{
+			print("  Error: Could not create process.");
+
 			CloseHandle(si.hStdInput);
 			CloseHandle(si.hStdOutput);
 			return;
@@ -235,93 +226,45 @@ void blink::application::run()
 
 		// Set up compiler process environment variables
 #if _M_IX86
-		//const std::string command = "\"" + _build_tool + "\\..\\..\\vcvarsall.bat\" x86\n";
 		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86\n";
 #endif
 #if _M_AMD64
-		//const std::string command = "\"" + _build_tool + "\\..\\..\\..\\vcvarsall.bat\" x86_amd64\n";
 		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86_amd64\n";
 #endif
-		DWORD size = 0;
-		WriteFile(_compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
+		WriteFile(compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
 	}
 
-	print("Starting file system watcher for '" + _source_dir + "' ...");
+	print("Starting file system watcher for '" + _source_dir.string() + "' ...");
 
-	// Start file system watcher
-	_watcher.reset(new file_watcher(_source_dir));
+	// Open handle to the common source code directory
+	const HANDLE watcher_handle = CreateFileW(_source_dir.native().c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 
-	bool executing = false;
-
-	while (true)
+	if (watcher_handle == INVALID_HANDLE_VALUE)
 	{
-		Sleep(1);
+		print("  Error: Could not open directory handle.");
+		return;
+	}
 
-		// Check for source modifications
-		if (std::vector<std::string> modified_file_paths; _watcher->check(modified_file_paths))
+	BYTE watcher_buffer[4096];
+
+	// Check for modifications to any of the source code files (need not monitor renames as well because some editors modify temporary files before renaming them to the actual one)
+	while (ReadDirectoryChangesW(watcher_handle, watcher_buffer, sizeof(watcher_buffer), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, nullptr, nullptr))
+	{
+		bool first_notification = true;
+
+		// Iterate over all notification items
+		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(watcher_buffer); first_notification || info->NextEntryOffset != 0;
+			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
 		{
-			for (const auto &modified_file_path : modified_file_paths)
-			{
-				// Ignore changes to files that are not C++ source files
-				if (modified_file_path.substr(modified_file_path.find_last_of('.') + 1) != "cpp")
-					continue;
+			const std::filesystem::path modified_file_path = _source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
-				_source_files_to_compile.push_back(modified_file_path);
-			}
-		}
+			// Ignore changes to files that are not C++ source files
+			if (modified_file_path.extension() != ".cpp")
+				continue;
 
-		// Read and react to compiler output messages
-		DWORD size = 0;
-		if (PeekNamedPipe(_compiler_stdout, nullptr, 0, nullptr, &size, nullptr) && size != 0)
-		{
-			std::string message(size, '\0');
-			ReadFile(_compiler_stdout, const_cast<char *>(message.data()), size, &size, nullptr);
+			std::filesystem::path object_file = modified_file_path; object_file.replace_extension(".obj");
 
-			for (size_t pos = 0, prev = 0; (pos = message.find('\n', prev)) != std::string::npos; prev = pos + 1)
-			{
-				const auto line = message.substr(prev, pos - prev);
-
-				// Only print error information
-				if (line.find("error") != std::string::npos || line.find("warning") != std::string::npos)
-					print(line.c_str());
-			}
-
-			if (const size_t offset = message.find("compile complete"); offset != std::string::npos)
-			{
-				const std::string exit_code = message.substr(offset + 17 /* strlen("compile complete ") */, message.find('\n', offset) - offset - 18);
-
-				print("Finished compiling \"" + _compiled_module_file + "\" with code " + exit_code + ".");
-
-				if (exit_code != "0") // Do not link if compilation was not successful
-					_compiled_module_file.clear();
-
-				executing = false;
-			}
-		}
-
-		// There is nothing more to do while the compiler is compiling
-		if (executing)
-			continue;
-
-		// Load the compiled module once it is finished
-		if (!_compiled_module_file.empty())
-		{
-			link(_compiled_module_file);
-
-			_compiled_module_file.clear();
-		}
-
-		// Kick of compilation for the next source file in the backlog of modified files
-		if (!_source_files_to_compile.empty())
-		{
-			const std::string modified_file_path = _source_files_to_compile.front();
-			_source_files_to_compile.erase(_source_files_to_compile.begin(), _source_files_to_compile.begin() + 1);
-
-			executing = true;
-
-			_compiled_module_file = modified_file_path.substr(0, modified_file_path.find_last_of('.')) + ".obj";
-
-			print("Detected modification to: " + modified_file_path);
+			print("Detected modification to: " + modified_file_path.string());
 
 			// Build compiler command line
 			std::string cmdline = "cl.exe "
@@ -337,13 +280,47 @@ void blink::application::run()
 				cmdline += " /D \"" + define + "\"";
 			for (const auto &include_path : _include_dirs)
 				cmdline += " /I \"" + include_path + "\"";
-			cmdline += " /Fo\"" + _compiled_module_file + "\""; // Output object file
-			cmdline += " \"" + modified_file_path + "\""; // Input source code file
+			cmdline += " /Fo\"" + object_file.string() + "\""; // Output object file
+			cmdline += " \"" + modified_file_path.string() + "\""; // Input source code file
 
+			// Append special completion message
 			cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
 
 			// Execute compiler command line
-			WriteFile(_compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
+			WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
+
+			// Read and react to compiler output messages
+			while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
+			{
+				std::string message(size, '\0');
+				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
+
+				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
+				{
+					const auto line = message.substr(offset, next - offset);
+
+					// Only print error information
+					if (line.find("error") != std::string::npos || line.find("warning") != std::string::npos)
+						print(line.c_str());
+				}
+
+				// Listen for special completion message
+				if (const size_t offset = message.find("compile complete"); offset != std::string::npos)
+				{
+					const std::string exit_code = message.substr(offset + 17 /* compile complete */, message.find('\n', offset) - offset - 18);
+
+					print("Finished compiling \"" + object_file.string() + "\" with code " + exit_code + ".");
+
+					// Only load the compiled module if compilation was successful
+					if (exit_code == "0")
+						link(object_file);
+					break;
+				}
+			}
 		}
 	}
+
+	CloseHandle(watcher_handle);
+	CloseHandle(compiler_stdin);
+	CloseHandle(compiler_stdout);
 }

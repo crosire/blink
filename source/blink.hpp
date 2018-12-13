@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
 #include <vector>
+#include <string>
+#include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -24,20 +24,16 @@ namespace blink
 	{
 	public:
 		application();
-		~application();
 
 		void run();
-		bool link(const std::string &path);
+		bool link(const std::filesystem::path &object_file);
 
 	private:
 		uint8_t *_image_base = nullptr;
-		std::vector<std::string> _defines;
-		std::vector<std::string> _source_files;
-		std::vector<std::string> _source_files_to_compile;
+		std::filesystem::path _source_dir;
 		std::unordered_set<std::string> _include_dirs;
+		std::vector<std::string> _defines;
+		std::vector<std::filesystem::path> _source_files;
 		std::unordered_map<std::string, void *> _symbols;
-		std::unique_ptr<class file_watcher> _watcher;
-		void *_compiler_stdin, *_compiler_stdout;
-		std::string _source_dir, _compiled_module_file;
 	};
 }

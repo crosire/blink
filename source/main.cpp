@@ -4,9 +4,9 @@
  */
 
 #include "blink.hpp"
+#include <iostream>
 #include <Windows.h>
 #include <Psapi.h>
-#include <iostream>
 
 #pragma region CRT sections
 // This exists to imitate the behavior of the CRT initialization code

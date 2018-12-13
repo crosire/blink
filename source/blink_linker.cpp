@@ -159,17 +159,23 @@ bool blink::application::link(const std::string &path)
 		return false;
 	}
 
-	const auto string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
-
-	// Read symbol + string table and section headers from input file
-	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols + string_table_size / sizeof(IMAGE_SYMBOL));
-	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
-	if (DWORD read; !ReadFile(file, symbols.data(), static_cast<DWORD>(symbols.size() * sizeof(IMAGE_SYMBOL)), &read, nullptr))
+	// Read section headers from input file (there is no optional header in COFF files, so it is right after the header read above)
+	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
+	if (DWORD read; !ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
 		return false;
 
-	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
-	SetFilePointer(file, sizeof(IMAGE_FILE_HEADER) + header.SizeOfOptionalHeader, nullptr, FILE_BEGIN);
-	if (DWORD read; !ReadFile(file, sections.data(), static_cast<DWORD>(sections.size() * sizeof(IMAGE_SECTION_HEADER)), &read, nullptr))
+	// Read symbol table from input file
+	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
+
+	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols);
+	if (DWORD read; !ReadFile(file, symbols.data(), header.NumberOfSymbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
+		return false;
+
+	// The string table follows after the symbol table and is usually at the end of the file
+	const DWORD string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
+
+	std::vector<char> strings(string_table_size);
+	if (DWORD read; !ReadFile(file, strings.data(), string_table_size, &read, nullptr))
 		return false;
 
 	// Calculate total module size
@@ -279,9 +285,22 @@ bool blink::application::link(const std::string &path)
 	{
 		BYTE *target_address = nullptr;
 		const IMAGE_SYMBOL &symbol = symbols[i];
-		const auto symbol_name = symbol.N.Name.Short == 0 ?
-			std::string(reinterpret_cast<const char *>(symbols.data() + header.NumberOfSymbols) + symbol.N.Name.Long) :
-			std::string(reinterpret_cast<const char *>(symbol.N.ShortName), strnlen(reinterpret_cast<const char *>(symbol.N.ShortName), IMAGE_SIZEOF_SHORT_NAME));
+
+		// Get symbol name from string table if it is a long name
+		std::string symbol_name;
+		if (symbol.N.Name.Short == 0)
+		{
+			assert(symbol.N.Name.Long < string_table_size);
+
+			symbol_name = strings.data() + symbol.N.Name.Long;
+		}
+		else
+		{
+			const auto short_name = reinterpret_cast<const char *>(symbol.N.ShortName);
+
+			symbol_name = std::string(short_name, strnlen(short_name, IMAGE_SIZEOF_SHORT_NAME));
+		}
+
 		const auto symbol_table_lookup = _symbols.find(symbol_name);
 
 		if (symbol.StorageClass == IMAGE_SYM_CLASS_EXTERNAL && symbol.SectionNumber == IMAGE_SYM_UNDEFINED)

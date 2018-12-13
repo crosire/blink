@@ -64,14 +64,36 @@ void blink::application::run()
 
 		for (unsigned int i = 0; import_directory_entries[i].FirstThunk != 0; i++)
 		{
+			const auto name = reinterpret_cast<const char *>(_image_base + import_directory_entries[i].Name);
 			const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].Characteristics);
 			const auto import_address_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].FirstThunk);
 
 			for (unsigned int k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
 			{
-				const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(_image_base + import_name_table[k].u1.AddressOfData);
+				const char *import_name = nullptr;
 
-				_symbols.insert({ import->Name, reinterpret_cast<void *>(import_address_table[k].u1.AddressOfData) });
+				// We need to figure out the name of symbols imported by ordinal by going through the export table of the target module
+				if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
+				{
+					// The module should have already been loaded by Windows when the application was launched, so just get its handle here
+					const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
+					const auto target_headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(target_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(target_base)->e_lfanew);
+					const auto export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(target_base + target_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
+					const auto export_name_strings = reinterpret_cast<const DWORD *>(target_base + export_directory->AddressOfNames);
+					const auto export_name_ordinals = reinterpret_cast<const WORD *>(target_base + export_directory->AddressOfNameOrdinals);
+
+					const auto ordinal = std::find(export_name_ordinals, export_name_ordinals + export_directory->NumberOfNames, IMAGE_ORDINAL(import_name_table[k].u1.Ordinal));
+					if (ordinal != export_name_ordinals + export_directory->NumberOfNames)
+						import_name = reinterpret_cast<const char *>(target_base + export_name_strings[std::distance(export_name_ordinals, ordinal)]);
+					else
+						continue; // Ignore ordinal imports for which the name could not be resolved
+				}
+				else
+				{
+					import_name = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(_image_base + import_name_table[k].u1.AddressOfData)->Name;
+				}
+
+				_symbols.insert({ import_name, reinterpret_cast<void *>(import_address_table[k].u1.AddressOfData) });
 			}
 		}
 	}

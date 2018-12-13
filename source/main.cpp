@@ -31,14 +31,14 @@ void print(const char *message, size_t length)
 	WriteFile(console, message, size, &size, nullptr);
 }
 
-DWORD CALLBACK remote_main(BYTE *imagebase)
+DWORD CALLBACK remote_main(BYTE *image_base)
 {
 	#pragma region Initialize module image
-	const auto imageheaders = reinterpret_cast<const IMAGE_NT_HEADERS *>(imagebase + reinterpret_cast<const IMAGE_DOS_HEADER *>(imagebase)->e_lfanew);
+	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(image_base)->e_lfanew);
 
 	// Apply base relocations
-	auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-	const auto relocation_delta = imagebase - reinterpret_cast<const BYTE *>(imageheaders->OptionalHeader.ImageBase);
+	auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(image_base + headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+	const auto relocation_delta = image_base - reinterpret_cast<const BYTE *>(headers->OptionalHeader.ImageBase);
 
 	if (relocation_delta != 0) // No need to relocate anything if the delta is zero
 	{
@@ -55,10 +55,10 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 				case IMAGE_REL_BASED_ABSOLUTE:
 					break; // This one does not do anything and exists only for table alignment, so ignore it
 				case IMAGE_REL_BASED_HIGHLOW:
-					*reinterpret_cast<UINT32 *>(imagebase + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT32>(relocation_delta);
+					*reinterpret_cast<UINT32 *>(image_base + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT32>(relocation_delta);
 					break;
 				case IMAGE_REL_BASED_DIR64:
-					*reinterpret_cast<UINT64 *>(imagebase + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT64>(relocation_delta);
+					*reinterpret_cast<UINT64 *>(image_base + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT64>(relocation_delta);
 					break;
 				default:
 					return 1; // Exit when encountering an unknown relocation type
@@ -70,13 +70,13 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 	}
 
 	// Update import address table (IAT)
-	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(imagebase + imageheaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(image_base + headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 
 	for (size_t i = 0; import_directory_entries[i].FirstThunk != 0; i++)
 	{
-		const auto name = reinterpret_cast<const char *>(imagebase + import_directory_entries[i].Name);
-		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].Characteristics);
-		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(imagebase + import_directory_entries[i].FirstThunk);
+		const auto name = reinterpret_cast<const char *>(image_base + import_directory_entries[i].Name);
+		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(image_base + import_directory_entries[i].Characteristics);
+		const auto import_address_table = reinterpret_cast<IMAGE_THUNK_DATA *>(image_base + import_directory_entries[i].FirstThunk);
 
 		// It is safe to call 'LoadLibrary' here because the IAT entry for it was copied from the parent process and KERNEL32.dll is always loaded at the same address
 		const HMODULE module = LoadLibraryA(name);
@@ -86,9 +86,18 @@ DWORD CALLBACK remote_main(BYTE *imagebase)
 
 		for (size_t k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
 		{
-			const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(imagebase + import_name_table[k].u1.AddressOfData);
+			if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
+			{
+				const auto import = IMAGE_ORDINAL(import_name_table[k].u1.Ordinal);
 
-			import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, import->Name));
+				import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, reinterpret_cast<LPCSTR>(import)));
+			}
+			else
+			{
+				const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(image_base + import_name_table[k].u1.AddressOfData);
+
+				import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, import->Name));
+			}
 		}
 	}
 

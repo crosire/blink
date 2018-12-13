@@ -24,7 +24,7 @@ blink::file_watcher::~file_watcher()
 	CloseHandle(_completion_handle);
 }
 
-bool blink::file_watcher::check(std::vector<std::string> &modifications)
+bool blink::file_watcher::check(std::vector<std::string> &modified_file_paths)
 {
 	DWORD transferred;
 	ULONG_PTR key;
@@ -43,7 +43,7 @@ bool blink::file_watcher::check(std::vector<std::string> &modifications)
 		filename.resize(WideCharToMultiByte(CP_UTF8, 0, record->FileName, record->FileNameLength, const_cast<char *>(filename.data()), MAX_PATH, nullptr, nullptr));
 		filename = _path + '\\' + filename;
 
-		modifications.push_back(std::move(filename));
+		modified_file_paths.push_back(std::move(filename));
 
 		if (record->NextEntryOffset == 0)
 			break;

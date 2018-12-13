@@ -77,6 +77,9 @@ void blink::application::run()
 				{
 					// The module should have already been loaded by Windows when the application was launched, so just get its handle here
 					const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
+					if (target_base == nullptr)
+						continue; // Bail out if that is not the case to be safe
+
 					const auto target_headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(target_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(target_base)->e_lfanew);
 					const auto export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(target_base + target_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
 					const auto export_name_strings = reinterpret_cast<const DWORD *>(target_base + export_directory->AddressOfNames);
@@ -254,9 +257,21 @@ void blink::application::run()
 	{
 		Sleep(1);
 
-		// Read compiler output messages
-		DWORD size = 0;
+		// Check for source modifications
+		if (std::vector<std::string> modified_file_paths; _watcher->check(modified_file_paths))
+		{
+			for (const auto &modified_file_path : modified_file_paths)
+			{
+				// Ignore changes to files that are not C++ source files
+				if (modified_file_path.substr(modified_file_path.find_last_of('.') + 1) != "cpp")
+					continue;
 
+				_source_files_to_compile.push_back(modified_file_path);
+			}
+		}
+
+		// Read and react to compiler output messages
+		DWORD size = 0;
 		if (PeekNamedPipe(_compiler_stdout, nullptr, 0, nullptr, &size, nullptr) && size != 0)
 		{
 			std::string message(size, '\0');
@@ -271,8 +286,7 @@ void blink::application::run()
 					print(line.c_str());
 			}
 
-			const size_t offset = message.find("compile complete");
-			if (offset != std::string::npos)
+			if (const size_t offset = message.find("compile complete"); offset != std::string::npos)
 			{
 				const std::string exit_code = message.substr(offset + 17 /* strlen("compile complete ") */, message.find('\n', offset) - offset - 18);
 
@@ -285,10 +299,11 @@ void blink::application::run()
 			}
 		}
 
+		// There is nothing more to do while the compiler is compiling
 		if (executing)
 			continue;
 
-		// Load compiled modules
+		// Load the compiled module once it is finished
 		if (!_compiled_module_file.empty())
 		{
 			link(_compiled_module_file);
@@ -296,44 +311,39 @@ void blink::application::run()
 			_compiled_module_file.clear();
 		}
 
-		// Check for source modifications and recompile on changes
-		std::vector<std::string> files;
-
-		if (_watcher->check(files))
+		// Kick of compilation for the next source file in the backlog of modified files
+		if (!_source_files_to_compile.empty())
 		{
-			for (const auto &path : files)
-			{
-				if (path.substr(path.find_last_of('.') + 1) != "cpp")
-					continue;
+			const std::string modified_file_path = _source_files_to_compile.front();
+			_source_files_to_compile.erase(_source_files_to_compile.begin(), _source_files_to_compile.begin() + 1);
 
-				executing = true;
-				_compiled_module_file = path.substr(0, path.find_last_of('.')) + ".obj";
+			executing = true;
 
-				print("Detected modification to: " + path);
+			_compiled_module_file = modified_file_path.substr(0, modified_file_path.find_last_of('.')) + ".obj";
 
-				// Build compiler command line
-				std::string cmdline = "cl.exe "
-					"/c " // Compile only, do not link
-					"/nologo " // Suppress copyright message
-					"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
-					"/MDd " // Link with 'MSVCRTD.lib'
-					"/Od " // Disable optimizations
-					"/EHsc " // Enable C++ exceptions
-					"/std:c++latest " // C++ standard version
-					"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
-				for (const auto &define : _defines)
-					cmdline += " /D \"" + define + "\"";
-				for (const auto &include_path : _include_dirs)
-					cmdline += " /I \"" + include_path + "\"";
-				cmdline += " /Fo\"" + _compiled_module_file + "\""; // Output object file
-				cmdline += " \"" + path + "\""; // Input source code file
+			print("Detected modification to: " + modified_file_path);
 
-				cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
+			// Build compiler command line
+			std::string cmdline = "cl.exe "
+				"/c " // Compile only, do not link
+				"/nologo " // Suppress copyright message
+				"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
+				"/MDd " // Link with 'MSVCRTD.lib'
+				"/Od " // Disable optimizations
+				"/EHsc " // Enable C++ exceptions
+				"/std:c++latest " // C++ standard version
+				"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
+			for (const auto &define : _defines)
+				cmdline += " /D \"" + define + "\"";
+			for (const auto &include_path : _include_dirs)
+				cmdline += " /I \"" + include_path + "\"";
+			cmdline += " /Fo\"" + _compiled_module_file + "\""; // Output object file
+			cmdline += " \"" + modified_file_path + "\""; // Input source code file
 
-				// Execute compiler command line
-				WriteFile(_compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
-				break;
-			}
+			cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
+
+			// Execute compiler command line
+			WriteFile(_compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
 		}
 	}
 }

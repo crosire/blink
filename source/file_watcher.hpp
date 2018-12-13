@@ -18,7 +18,7 @@ namespace blink
 		explicit file_watcher(const std::string &path);
 		~file_watcher();
 
-		bool check(std::vector<std::string> &modifications);
+		bool check(std::vector<std::string> &modified_file_paths);
 
 	private:
 		std::string _path;

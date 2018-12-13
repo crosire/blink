@@ -33,10 +33,11 @@ namespace blink
 		uint8_t *_image_base = nullptr;
 		std::vector<std::string> _defines;
 		std::vector<std::string> _source_files;
+		std::vector<std::string> _source_files_to_compile;
 		std::unordered_set<std::string> _include_dirs;
 		std::unordered_map<std::string, void *> _symbols;
 		std::unique_ptr<class file_watcher> _watcher;
-		std::string _source_dir, _compiled_module_file;
 		void *_compiler_stdin, *_compiler_stdout;
+		std::string _source_dir, _compiled_module_file;
 	};
 }

@@ -15,6 +15,11 @@ There are two ways to use blink:
 2) Or attach blink to an already running application:\
 	```blink.exe PID``` where PID is the process ID to attach to
 
+> Note: The compiler path is currently hardcoded in blink's source code, so you may have to change that: https://github.com/crosire/blink/blob/78cf9a531583a5ac5c1ebe6118ad7205f8335c9e/source/blink.cpp#L229 \
+> Similarily, blink is not currently able to deduce global preprocessor defines that were used to compile the target application. As such you need to set those manually as well: https://github.com/crosire/blink/blob/78cf9a531583a5ac5c1ebe6118ad7205f8335c9e/source/blink.cpp#L279
+
+> There are plans to fix both these issues though: https://github.com/crosire/blink/issues/6
+
 ## Contributing
 
 Any contributions to the project are welcomed, it's recommended to use GitHub [pull requests](https://help.github.com/articles/using-pull-requests/).

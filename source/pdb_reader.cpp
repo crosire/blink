@@ -194,38 +194,25 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 	const size_t num_sections = section_stream.size() / sizeof(pdb_dbi_section_header);
 	const pdb_dbi_section_header *sections = section_stream.data<pdb_dbi_section_header>();
 
-	// Read symbol table
+	// Read symbol table records in CodeView format
 	stream = msf_reader::stream(header.symbol_record_stream);
 
-	// A list of records in CodeView format
-	while (stream.tell() < stream.size())
-	{
-		// Each records starts with 2 bytes containing the size of the record after this element
-		const auto size = stream.read<uint16_t>();
-		// Next 2 bytes contain an enumeration depicting the type and format of the following data
-		const auto code_view_tag = stream.read<uint16_t>();
-		// The next record is found by adding the current record size to the position of the previous size element
-		const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
+	parse_code_view_records(stream, [&](uint16_t tag) {
+		if (tag != 0x110E) // S_PUB32
+			return; // Skip all records that are not about public symbols
 
-		if (code_view_tag == 0x110E) // S_PUB32
-		{
-			stream.skip(4); // Flags
-			const auto offset = stream.read<uint32_t>();
-			const auto section = stream.read<uint16_t>();
+		const struct PUBSYM32 {
+			uint32_t flags;
+			uint32_t offset;
+			uint16_t section;
+			const char name[1];
+		} &sym = *stream.data<const PUBSYM32>();
 
-			const std::string mangled_name(stream.read_string());
-
-			if (section == 0 || section > num_sections)
-				symbols[mangled_name] = reinterpret_cast<void *>(static_cast<uintptr_t>(offset)); // Relative address
-			else
-				symbols[mangled_name] = image_base + offset + sections[section - 1].virtual_address; // Absolute address
-		}
-
-		stream.seek(next_record_offset);
-
-		// Each element is aligned to 4-byte boundary
-		stream.align(4);
-	}
+		if (sym.section == 0 || sym.section > num_sections)
+			symbols[sym.name] = reinterpret_cast<void *>(static_cast<uintptr_t>(sym.offset)); // Relative address
+		else
+			symbols[sym.name] = image_base + sections[sym.section - 1].virtual_address + sym.offset; // Absolute address
+	}, 4);
 }
 
 void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &object_files)

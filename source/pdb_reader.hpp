@@ -97,6 +97,7 @@ namespace blink
 	class stream_reader
 	{
 	public:
+		stream_reader() = default;
 		stream_reader(std::vector<char> &&stream) :
 			_stream(std::move(stream)) {}
 		stream_reader(const std::vector<char> &stream) :
@@ -176,4 +177,27 @@ namespace blink
 		size_t _stream_offset = 0;
 		std::vector<char> _stream;
 	};
+
+	/// <summary>
+	/// Helper function that parses a CodeView stream and calls a callback function for every record in it
+	/// </summary>
+	template <typename L>
+	void parse_code_view_records(stream_reader &stream, L callback, size_t alignment = 1)
+	{
+		// A list of records in CodeView format
+		while (stream.tell() < stream.size())
+		{
+			// Each records starts with 2 bytes containing the size of the record after this element
+			const auto size = stream.read<uint16_t>();
+			// Next 2 bytes contain an enumeration depicting the type and format of the following data
+			const auto code_view_tag = stream.read<uint16_t>();
+			// The next record is found by adding the current record size to the position of the previous size element
+			const auto next_record_offset = (stream.tell() - sizeof(size)) + size;
+
+			callback(code_view_tag);
+
+			stream.seek(next_record_offset);
+			stream.align(alignment);
+		}
+	}
 }

@@ -110,6 +110,18 @@ void blink::application::run()
 				pdb.read_symbol_table(_image_base, _symbols);
 				pdb.read_object_files(_object_files);
 				pdb.read_source_files(_source_files);
+
+				for (size_t i = 0; i < _object_files.size(); ++i)
+				{
+					if (std::error_code ec; _object_files[i].extension() != ".obj" || !std::filesystem::exists(_object_files[i], ec))
+						continue;
+
+					const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
+						[](const auto &path) { return path.extension() == ".cpp"; });
+
+					if (it != _source_files[i].end())
+						print("  Found source file: " + it->string());
+				}
 			}
 			else
 			{
@@ -172,15 +184,6 @@ void blink::application::run()
 		CloseHandle(si.hStdOutput);
 
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
-
-		// Set up compiler process environment variables
-#if _M_IX86
-		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86\n";
-#endif
-#if _M_AMD64
-		const std::string command = "\"C:\\Program Files (x86)\\Microsoft Visual Studio 15.0\\VC\\Auxiliary\\Build\\vcvarsall.bat\" x86_amd64\n";
-#endif
-		WriteFile(compiler_stdin, command.c_str(), static_cast<DWORD>(command.size()), &size, nullptr);
 	}
 
 	print("Starting file system watcher for '" + _source_dir.string() + "' ...");
@@ -216,6 +219,9 @@ void blink::application::run()
 
 			// Build compiler command line
 			std::string cmdline = build_compile_command_line(source_file, object_file);
+
+			if (cmdline.empty())
+				continue; // Skip this file modification if something went wrong
 
 			// Append special completion message
 			cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
@@ -257,25 +263,108 @@ void blink::application::run()
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file)
 {
+	Sleep(100); // Prevent file system error in the new few code lines
+
+	std::string cmdline;
+
+	// Check if this source file already exists in the application in which case we can read some information from the original object file
+	if (const auto it = std::find_if(_source_files.begin(), _source_files.end(), [&source_file](const auto &module_files) {
+			return std::find_if(module_files.begin(), module_files.end(), [&source_file](const auto &file) {
+				std::error_code ec; return std::filesystem::equivalent(source_file, file, ec); }) != module_files.end();
+		}); it != _source_files.end())
+	{
+		object_file = _object_files[std::distance(_source_files.begin(), it)];
+
+		stream_reader stream;
+		{
+			// Read original object file
+			const scoped_handle file = CreateFileW(object_file.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+			if (file == INVALID_HANDLE_VALUE)
+				return std::string();
+
+			IMAGE_FILE_HEADER header;
+			if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
+				return std::string();
+			std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
+			if (DWORD read; !ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+				return std::string();
+
+			// Find first debug symbol section and read it
+			const auto section = std::find_if(sections.begin(), sections.end(), [](const auto &s) {
+				return strcmp(reinterpret_cast<const char(&)[]>(s.Name), ".debug$S") == 0; });
+			std::vector<char> debug_data(section->SizeOfRawData);
+			SetFilePointer(file, section->PointerToRawData, nullptr, FILE_BEGIN);
+			if (DWORD read; !ReadFile(file, debug_data.data(), section->SizeOfRawData, &read, nullptr))
+				return std::string();
+
+			stream = stream_reader(std::move(debug_data));
+		}
+
+		// Skip header in front of CodeView records (version, ...)
+		stream.skip(4 * 3);
+
+		parse_code_view_records(stream, [&](uint16_t tag) {
+			if (tag != 0x113d) // S_ENVBLOCK
+				return; // Skip all records that are not about the compiler environment
+			stream.skip(1);
+			while (stream.tell() < stream.size() && *stream.data() != '\0')
+			{
+				const auto key = stream.read_string();
+				const std::string value(stream.read_string());
+
+				if (key == "cwd")
+					cmdline += "cd /D \"" + value + "\"\n";
+				else if (key == "cl") // Add compiler directories to path, so that 'mspdbcore.dll' is found
+					cmdline += "set PATH=%PATH%;" + value + "\\..\\..\\x86;" + value + "\\..\\..\\x64\n\"" + value + "\" ";
+				else if (key == "cmd")
+					cmdline += value;
+			}
+		});
+
+		cmdline += ' ';
+
+		// Remove some arguments from the command-line since they are set to different values below
+		const auto remove_arg = [&cmdline](std::string arg) {
+			for (unsigned int k = 0; k < 2; ++k)
+				if (size_t offset = cmdline.find("-/"[k] + arg); offset != std::string::npos)
+				{
+					if (cmdline[offset + 1 + arg.size()] != '\"')
+						cmdline.erase(offset, cmdline.find(' ', offset) - offset);
+					else
+						cmdline.erase(offset, cmdline.find('\"', offset + 2 + arg.size()) + 2 - offset);
+					break;
+				}
+		};
+
+		remove_arg("Fo");
+		remove_arg("Fd");
+		remove_arg("ZI");
+		remove_arg("JMC");
+	}
+	else
+	{
+		cmdline =
+			"cl.exe "
+			"/c " // Compile only, do not link
+			"/nologo " // Suppress copyright message
+			"/Z7 " // Enable COFF debug information
+			"/MDd " // Link with 'MSVCRTD.lib'
+			"/Od " // Disable optimizations
+			"/EHsc " // Enable C++ exceptions
+			"/std:c++latest " // C++ standard version
+			"/Zc:wchar_t /Zc:forScope /Zc:inline "; // C++ language conformance
+	}
+
+	// Always write to a separate object file since the original one may be in user by a debugger
 	object_file = source_file;
 	object_file.replace_extension(".obj");
 
-	std::string cmdline =
-		"cl.exe "
-		"/c " // Compile only, do not link
-		"/nologo " // Suppress copyright message
-		"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
-		"/MDd " // Link with 'MSVCRTD.lib'
-		"/Od " // Disable optimizations
-		"/EHsc " // Enable C++ exceptions
-		"/std:c++latest " // C++ standard version
-		"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
-	for (const auto &define : _defines)
-		cmdline += " /D \"" + define + "\"";
-	for (const auto &include_path : _include_dirs)
-		cmdline += " /I \"" + include_path + "\"";
-	cmdline += " /Fo\"" + object_file.string() + "\""; // Output object file
-	cmdline += " \"" + source_file.string() + "\""; // Input source code file
+	// Append input source file to command-line
+	cmdline += '\"' + source_file.string() + '\"';
+
+	// Append output object file to command-line
+	cmdline += " /Fo\"" + object_file.string() + '\"';
 
 	return cmdline;
 }

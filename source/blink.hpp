@@ -33,8 +33,6 @@ namespace blink
 	private:
 		uint8_t *_image_base = nullptr;
 		std::filesystem::path _source_dir;
-		std::unordered_set<std::string> _include_dirs;
-		std::vector<std::string> _defines;
 		std::vector<std::filesystem::path> _object_files;
 		std::vector<std::vector<std::filesystem::path>> _source_files;
 		std::unordered_map<std::string, void *> _symbols;

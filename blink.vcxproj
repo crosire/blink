@@ -126,6 +126,7 @@
     <ClInclude Include="source\blink.hpp" />
     <ClInclude Include="source\msf_reader.hpp" />
     <ClInclude Include="source\pdb_reader.hpp" />
+    <ClInclude Include="source\scoped_handle.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -19,6 +19,7 @@
     <ClInclude Include="source\msf_reader.hpp">
       <Filter>pdb</Filter>
     </ClInclude>
+    <ClInclude Include="source\scoped_handle.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="pdb">

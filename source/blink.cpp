@@ -5,6 +5,7 @@
 
 #include "blink.hpp"
 #include "pdb_reader.hpp"
+#include "scoped_handle.hpp"
 #include <string>
 #include <algorithm>
 #include <unordered_map>
@@ -123,8 +124,7 @@ void blink::application::run()
 		}
 	}
 
-	HANDLE compiler_stdin = INVALID_HANDLE_VALUE;
-	HANDLE compiler_stdout = INVALID_HANDLE_VALUE;
+	scoped_handle compiler_stdin, compiler_stdout;
 
 	{	print("Starting compiler process ...");
 
@@ -186,7 +186,7 @@ void blink::application::run()
 	print("Starting file system watcher for '" + _source_dir.string() + "' ...");
 
 	// Open handle to the common source code directory
-	const HANDLE watcher_handle = CreateFileW(_source_dir.native().c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	const scoped_handle watcher_handle = CreateFileW(_source_dir.native().c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 
 	if (watcher_handle == INVALID_HANDLE_VALUE)
 	{
@@ -253,10 +253,6 @@ void blink::application::run()
 			}
 		}
 	}
-
-	CloseHandle(watcher_handle);
-	CloseHandle(compiler_stdin);
-	CloseHandle(compiler_stdout);
 }
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file)

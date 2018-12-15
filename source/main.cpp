@@ -4,6 +4,7 @@
  */
 
 #include "blink.hpp"
+#include "scoped_handle.hpp"
 #include <iostream>
 #include <Windows.h>
 #include <Psapi.h>
@@ -155,7 +156,7 @@ int main(int argc, char *argv[])
 
 	// Open target application process
 	const HANDLE local_process = GetCurrentProcess();
-	const HANDLE remote_process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION, FALSE, pid);
+	const scoped_handle remote_process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION, FALSE, pid);
 
 	if (remote_process == nullptr)
 	{
@@ -169,8 +170,6 @@ int main(int argc, char *argv[])
 
 	if (local_is_wow64 != remote_is_wow64)
 	{
-		CloseHandle(remote_process);
-
 		std::cout << "Machine architecture mismatch between target application and this application!" << std::endl;
 		return ERROR_IMAGE_MACHINE_TYPE_MISMATCH;
 	}
@@ -178,16 +177,15 @@ int main(int argc, char *argv[])
 	std::cout << "Launching in target application ..." << std::endl;
 
 	// Create a pipe for communication between this process and the target application
-	HANDLE local_pipe = INVALID_HANDLE_VALUE;
-
+	scoped_handle local_pipe;
 	if (!CreatePipe(&local_pipe, &console, nullptr, 512) || !DuplicateHandle(local_process, console, remote_process, &console, 0, FALSE, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS))
 	{
 		std::cout << "Failed to create new communication pipe!" << std::endl;
 		return GetLastError();
 	}
 
-	MODULEINFO moduleinfo;
-	if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(nullptr), &moduleinfo, sizeof(moduleinfo)))
+	MODULEINFO module_info;
+	if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(nullptr), &module_info, sizeof(module_info)))
 		return GetLastError();
 
 #ifdef _DEBUG // Use 'LoadLibrary' to create image in target application so that debug information is loaded
@@ -204,7 +202,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Execute 'LoadLibrary' in target application
-	const HANDLE load_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibrary), load_param, 0, nullptr);
+	const scoped_handle load_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibrary), load_param, 0, nullptr);
 
 	if (load_thread == nullptr)
 	{
@@ -214,7 +212,6 @@ int main(int argc, char *argv[])
 
 	// Wait for loading to finish and clean up parameter memory afterwards
 	WaitForSingleObject(load_thread, INFINITE);
-	CloseHandle(load_thread);
 	VirtualFreeEx(remote_process, load_param, 0, MEM_RELEASE);
 
 	// Find address of the now loaded module in the target application process
@@ -238,22 +235,22 @@ int main(int argc, char *argv[])
 	}
 
 	// Make the entire image writable so the copy operation below can succeed
-	VirtualProtectEx(remote_process, remote_baseaddress, moduleinfo.SizeOfImage, PAGE_EXECUTE_READWRITE, &modules_size);
+	VirtualProtectEx(remote_process, remote_baseaddress, module_info.SizeOfImage, PAGE_EXECUTE_READWRITE, &modules_size);
 #else
-	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, moduleinfo.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, module_info.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
 #endif
 
 	// Copy current module image to target application (including the IAT and value of the global 'console' variable)
-	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, nullptr))
+	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, module_info.lpBaseOfDll, module_info.SizeOfImage, nullptr))
 	{
 		std::cout << "Failed to allocate and write image in target application!" << std::endl;
 		return GetLastError();
 	}
 
 	// Launch module main entry point in target application
-	const auto remote_entrypoint = remote_baseaddress + (reinterpret_cast<BYTE *>(&remote_main) - static_cast<BYTE *>(moduleinfo.lpBaseOfDll));
+	const auto remote_entrypoint = remote_baseaddress + (reinterpret_cast<BYTE *>(&remote_main) - static_cast<BYTE *>(module_info.lpBaseOfDll));
 	std::cout << "  Entry point was written to address " << static_cast<const void *>(remote_baseaddress) << std::endl;
-	const HANDLE remote_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(remote_entrypoint), remote_baseaddress, 0, nullptr);
+	const scoped_handle remote_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(remote_entrypoint), remote_baseaddress, 0, nullptr);
 
 	if (remote_thread == nullptr)
 	{
@@ -276,10 +273,6 @@ int main(int argc, char *argv[])
 	DWORD exitcode = 0, remote_exitcode = 0;
 	GetExitCodeThread(remote_thread, &exitcode);
 	GetExitCodeProcess(remote_process, &remote_exitcode);
-
-	CloseHandle(local_pipe);
-	CloseHandle(remote_thread);
-	CloseHandle(remote_process);
 
 	std::cout << "The target application has exited with code " << remote_exitcode << "." << std::endl;
 

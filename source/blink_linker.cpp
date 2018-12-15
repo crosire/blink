@@ -4,6 +4,7 @@
  */
 
 #include "blink.hpp"
+#include "scoped_handle.hpp"
 #include <assert.h>
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -65,17 +66,6 @@ static uint8_t *find_free_memory_region(uint8_t *address, size_t size)
 #endif
 	return nullptr;
 }
-
-struct scoped_handle
-{
-	HANDLE handle;
-
-	scoped_handle(HANDLE handle) :
-		handle(handle) { }
-	~scoped_handle() { if (handle != NULL && handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
-
-	operator HANDLE() const { return handle; }
-};
 
 struct thread_scope_guard : scoped_handle
 {
@@ -144,7 +134,6 @@ bool blink::application::link(const std::filesystem::path &path)
 
 	// Read COFF header from input file and check that it is of a valid format
 	IMAGE_FILE_HEADER header;
-
 	if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
 		return false;
 
@@ -281,7 +270,7 @@ bool blink::application::link(const std::filesystem::path &path)
 	std::vector<BYTE *> local_symbol_addresses(header.NumberOfSymbols);
 	std::vector<std::pair<BYTE *, const BYTE *>> image_function_relocations;
 
-	for (unsigned int i = 0; i < header.NumberOfSymbols; i++)
+	for (DWORD i = 0; i < header.NumberOfSymbols; i++)
 	{
 		BYTE *target_address = nullptr;
 		const IMAGE_SYMBOL &symbol = symbols[i];

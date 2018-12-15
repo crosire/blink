@@ -136,7 +136,7 @@ blink::pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 		return;
 
 	// Read PDB info stream
-	msf_stream_reader pdb_stream(msf_reader::stream(1));
+	stream_reader pdb_stream(msf_reader::stream(1));
 	if (pdb_stream.size() == 0)
 		return;
 
@@ -178,7 +178,7 @@ blink::pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 
 void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_map<std::string, void *> &symbols)
 {
-	msf_stream_reader stream(msf_reader::stream(3));
+	stream_reader stream(msf_reader::stream(3));
 
 	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
@@ -189,7 +189,7 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 	const pdb_dbi_debug_header &debug_header = stream.read<pdb_dbi_debug_header>();
 
 	// Read section headers
-	msf_stream_reader section_stream(msf_reader::stream(debug_header.section_header));
+	stream_reader section_stream(msf_reader::stream(debug_header.section_header));
 
 	const size_t num_sections = section_stream.size() / sizeof(pdb_dbi_section_header);
 	const pdb_dbi_section_header *sections = section_stream.data<pdb_dbi_section_header>();
@@ -230,7 +230,7 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 
 void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &object_files)
 {
-	msf_stream_reader stream(msf_reader::stream(3));
+	stream_reader stream(msf_reader::stream(3));
 
 	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
@@ -252,7 +252,7 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 
 void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files)
 {
-	msf_stream_reader stream(msf_reader::stream(3));
+	stream_reader stream(msf_reader::stream(3));
 
 	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
@@ -264,16 +264,16 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 	const uint16_t num_modules = stream.read<uint16_t>();
 	stream.skip(2); // Skip old number of file names (see comment on counting the number below)
 
-	const uint16_t *module_file_offsets = stream.data<uint16_t>();
-	const uint16_t *module_num_source_files = stream.data<uint16_t>(num_modules * 2);
-	const uint32_t *file_name_offsets = stream.data<uint32_t>(num_modules * 4);
+	const uint16_t *const module_file_offsets = stream.data<uint16_t>();
+	const uint16_t *const module_num_source_files = stream.data<uint16_t>(num_modules * sizeof(uint16_t));
+	const uint32_t *const file_name_offsets = stream.data<uint32_t>(num_modules * sizeof(uint16_t) * 2);
 
 	// Count number of source files instead of reading the value from the header, since there may be more source files that would fit into a 16-bit value
 	uint32_t num_source_files = 0;
 	for (uint16_t i = 0; i < num_modules; ++i)
 		num_source_files += module_num_source_files[i];
 
-	stream.skip(num_modules * 4 + num_source_files * 4);
+	stream.skip(num_modules * sizeof(uint16_t) * 2 + num_source_files * sizeof(uint32_t));
 	const auto offset = stream.tell();
 
 	source_files.resize(num_modules);
@@ -290,7 +290,7 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 
 void blink::pdb_reader::read_link_info(std::filesystem::path &cwd, std::string &cmd)
 {
-	msf_stream_reader stream(this->stream("/LinkInfo"));
+	stream_reader stream(this->stream("/LinkInfo"));
 
 	if (!is_valid() || stream.size() == 0)
 		return;
@@ -305,7 +305,7 @@ void blink::pdb_reader::read_link_info(std::filesystem::path &cwd, std::string &
 
 void blink::pdb_reader::read_name_hash_table(std::unordered_map<uint32_t, std::string> &names)
 {
-	msf_stream_reader stream(this->stream("/names"));
+	stream_reader stream(this->stream("/names"));
 
 	if (!is_valid() || stream.size() == 0)
 		return;

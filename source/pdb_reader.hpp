@@ -90,4 +90,90 @@ namespace blink
 		struct guid _guid = {};
 		std::unordered_map<std::string, unsigned int> _named_streams;
 	};
+
+	/// <summary>
+	/// Class which provides cached reading access to the content streams of a multi-stream file.
+	/// </summary>
+	class stream_reader
+	{
+	public:
+		stream_reader(std::vector<char> &&stream) :
+			_stream(std::move(stream)) {}
+		stream_reader(const std::vector<char> &stream) :
+			_stream(stream) {}
+
+		/// <summary>
+		/// Gets the total stream size in bytes.
+		/// </summary>
+		size_t size() const { return _stream.size(); }
+		/// <summary>
+		/// Gets the offset in bytes from stream start to the current input position.
+		/// </summary>
+		size_t tell() const { return _stream_offset; }
+
+		/// <summary>
+		/// Returns a pointer to the current data.
+		/// </summary>
+		template <typename T = char> T *data(size_t offset = 0) { return reinterpret_cast<T *>(_stream.data() + _stream_offset + offset); }
+
+		/// <summary>
+		/// Increases the input position without reading any data from the stream.
+		/// </summary>
+		/// <param name="size">An offset in bytes from the current input position to the desired input position.</param>
+		void skip(size_t size) { _stream_offset += size; }
+		/// <summary>
+		/// Sets the input position.
+		/// </summary>
+		/// <param name="offset">An offset in bytes from stream start to the desired input position.</param>
+		void seek(size_t offset) { _stream_offset = offset; }
+
+		/// <summary>
+		/// Aligns the current input position.
+		/// </summary>
+		/// <param name="align">A value to align the input position to.</param>
+		void align(size_t align)
+		{
+			if (_stream_offset % align != 0)
+				skip(align - _stream_offset % align);
+		}
+
+		/// <summary>
+		/// Extracts data from the stream.
+		/// </summary>
+		/// <param name="buffer">A pointer to the byte array to store the data to.</param>
+		/// <param name="size">The amount of bytes to read from the stream into the buffer.</param>
+		size_t read(void *buffer, size_t size)
+		{
+			if (_stream_offset >= _stream.size())
+				return 0;
+
+			size = std::min(_stream.size() - _stream_offset, size);
+			std::memcpy(buffer, _stream.data() + _stream_offset, size);
+			_stream_offset += size;
+
+			return size;
+		}
+		/// <summary>
+		/// Extracts typed data from the stream.
+		/// </summary>
+		template <typename T> T &read()
+		{
+			_stream_offset += sizeof(T);
+			return *reinterpret_cast<T *>(_stream.data() + _stream_offset - sizeof(T));
+		}
+
+		/// <summary>
+		/// Extracts a null-terminated string from the stream.
+		/// </summary>
+		std::string_view blink::stream_reader::read_string()
+		{
+			std::string_view result(_stream.data() + _stream_offset);
+			_stream_offset += result.size() + 1;
+			return result;
+		}
+
+	private:
+		size_t _stream_offset = 0;
+		std::vector<char> _stream;
+	};
 }

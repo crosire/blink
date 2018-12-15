@@ -86,8 +86,13 @@ void blink::application::run()
 
 	{	print("Reading PE debug info directory ...");
 
-		guid pdb_guid;
-		std::string pdb_path;
+		struct RSDS_DEBUG_FORMAT
+		{
+			uint32_t signature;
+			guid guid;
+			uint32_t age;
+			char path[1];
+		} const *debug_data = nullptr;
 
 		// Search debug directory for program debug database file name
 		const IMAGE_DATA_DIRECTORY debug_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
@@ -95,35 +100,23 @@ void blink::application::run()
 
 		for (unsigned int i = 0; i < debug_directory.Size / sizeof(IMAGE_DEBUG_DIRECTORY); i++)
 		{
-			if (debug_directory_entries[i].Type != IMAGE_DEBUG_TYPE_CODEVIEW)
-				continue;
-
-			struct RSDS_DEBUG_FORMAT
+			if (debug_directory_entries[i].Type == IMAGE_DEBUG_TYPE_CODEVIEW)
 			{
-				uint32_t signature;
-				guid guid;
-				uint32_t age;
-				char path[1];
-			};
+				debug_data = reinterpret_cast<const RSDS_DEBUG_FORMAT *>(reinterpret_cast<const BYTE *>(_image_base + debug_directory_entries[i].AddressOfRawData));
 
-			const auto data = reinterpret_cast<const RSDS_DEBUG_FORMAT *>(reinterpret_cast<const BYTE *>(_image_base + debug_directory_entries[i].AddressOfRawData));
-
-			if (data->signature == 0x53445352) // RSDS
-			{
-				pdb_guid = data->guid;
-				pdb_path = data->path;
-				break;
+				if (debug_data->signature == 0x53445352) // RSDS
+					break;
 			}
 		}
 
-		if (!pdb_path.empty())
+		if (debug_data != nullptr)
 		{
-			print("  Found program debug database: " + pdb_path);
+			print("  Found program debug database: " + std::string(debug_data->path));
 
-			pdb_reader pdb(pdb_path);
+			pdb_reader pdb(debug_data->path);
 
 			// Check if the debug information actually matches the executable
-			if (pdb.guid() == pdb_guid)
+			if (pdb.guid() == debug_data->guid)
 			{
 				const auto pdb_symbols = pdb.symbols(_image_base);
 				const auto pdb_source_files = pdb.sourcefiles();
@@ -247,7 +240,7 @@ void blink::application::run()
 
 	BYTE watcher_buffer[4096];
 
-	// Check for modifications to any of the source code files (need not monitor renames as well because some editors modify temporary files before renaming them to the actual one)
+	// Check for modifications to any of the source code files
 	while (ReadDirectoryChangesW(watcher_handle, watcher_buffer, sizeof(watcher_buffer), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, nullptr, nullptr))
 	{
 		bool first_notification = true;

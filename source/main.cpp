@@ -37,11 +37,12 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(image_base)->e_lfanew);
 
 	// Apply base relocations
-	auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(image_base + headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	const auto relocation_delta = image_base - reinterpret_cast<const BYTE *>(headers->OptionalHeader.ImageBase);
 
 	if (relocation_delta != 0) // No need to relocate anything if the delta is zero
 	{
+		auto relocation = reinterpret_cast<const IMAGE_BASE_RELOCATION *>(image_base + headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
 		while (relocation->VirtualAddress != 0)
 		{
 			const auto field_count = (relocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
@@ -61,7 +62,7 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 					*reinterpret_cast<UINT64 *>(image_base + relocation->VirtualAddress + (field & 0xFFF)) += static_cast<INT64>(relocation_delta);
 					break;
 				default:
-					return 1; // Exit when encountering an unknown relocation type
+					return ERROR_IMAGE_AT_DIFFERENT_BASE; // Exit when encountering an unknown relocation type
 				}
 			}
 
@@ -88,12 +89,14 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 		{
 			if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
 			{
+				// Import by ordinal
 				const auto import = IMAGE_ORDINAL(import_name_table[k].u1.Ordinal);
 
 				import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, reinterpret_cast<LPCSTR>(import)));
 			}
 			else
 			{
+				// Import by function name
 				const auto import = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(image_base + import_name_table[k].u1.AddressOfData);
 
 				import_address_table[k].u1.AddressOfData = reinterpret_cast<DWORD_PTR>(GetProcAddress(module, import->Name));
@@ -101,7 +104,7 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 		}
 	}
 
-	// Call constructors
+	// Call global C/C++ constructors
 	_initterm(__xi_a, __xi_z);
 	_initterm(__xc_a, __xc_z);
 	#pragma endregion
@@ -109,7 +112,6 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 	// Run main loop
 	blink::application().run();
 
-	// Clean up handles
 	CloseHandle(console);
 
 	return 0;
@@ -132,7 +134,7 @@ int main(int argc, char *argv[])
 			for (int i = 1; i < argc; ++i, command_line += ' ')
 				command_line += argv[i];
 
-			if (!CreateProcessA(nullptr, const_cast<char *>(command_line.data()), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			if (!CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
 				std::cout << "Failed to start target application process!" << std::endl;
 				return GetLastError();
@@ -152,9 +154,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Open target application process
-	const DWORD access = PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION;
 	const HANDLE local_process = GetCurrentProcess();
-	const HANDLE remote_process = OpenProcess(access, FALSE, pid);
+	const HANDLE remote_process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION, FALSE, pid);
 
 	if (remote_process == nullptr)
 	{
@@ -171,7 +172,7 @@ int main(int argc, char *argv[])
 		CloseHandle(remote_process);
 
 		std::cout << "Machine architecture mismatch between target application and this application!" << std::endl;
-		return ERROR_BAD_ENVIRONMENT;
+		return ERROR_IMAGE_MACHINE_TYPE_MISMATCH;
 	}
 
 	std::cout << "Launching in target application ..." << std::endl;

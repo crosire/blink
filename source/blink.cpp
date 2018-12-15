@@ -118,11 +118,8 @@ void blink::application::run()
 			// Check if the debug information actually matches the executable
 			if (pdb.guid() == debug_data->guid)
 			{
-				const auto pdb_symbols = pdb.symbols(_image_base);
-				const auto pdb_source_files = pdb.sourcefiles();
-
-				_symbols.insert(pdb_symbols.begin(), pdb_symbols.end());
-				_source_files.assign(pdb_source_files.begin(), pdb_source_files.end());
+				pdb.read_symbol_table(_image_base, _symbols);
+				pdb.read_source_files(_source_files);
 			}
 			else
 			{

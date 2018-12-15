@@ -7,6 +7,7 @@
 
 #include "msf_reader.hpp"
 #include <unordered_map>
+#include <filesystem>
 
 namespace blink
 {
@@ -57,25 +58,27 @@ namespace blink
 		std::vector<char> stream(const std::string &name)
 		{
 			const auto it = _named_streams.find(name);
-
 			if (it == _named_streams.end())
 				return {};
-
 			return msf_reader::stream(it->second);
 		}
 
 		/// <summary>
 		/// Walks through all symbols in this PDB file and returns them.
 		/// </summary>
-		std::unordered_map<std::string, void *> symbols(uint8_t *image_base);
+		void read_symbol_table(uint8_t *image_base, std::unordered_map<std::string, void *> &symbols);
 		/// <summary>
-		/// Walks through the build info in this PDB file and returns all source file paths.
+		/// Returns all object file paths that were used to build the application.
 		/// </summary>
-		std::vector<std::string> sourcefiles();
+		void read_object_files(std::vector<std::filesystem::path> &object_files);
+		/// <summary>
+		/// Returns all source code file paths that were used to build the application.
+		/// </summary>
+		void read_source_files(std::vector<std::filesystem::path> &source_files);
 		/// <summary>
 		/// Returns the hash table of names found in the PDB file.
 		/// </summary>
-		std::unordered_map<unsigned int, std::string> names();
+		void read_name_hash_table(std::unordered_map<uint32_t, std::string> &names);
 
 	private:
 		unsigned int _version = 0, _timestamp = 0;

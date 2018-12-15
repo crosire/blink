@@ -94,33 +94,33 @@ blink::msf_reader::msf_reader(const std::string &path) :
 
 		stream.page_indices.resize(num_pages);
 
-		for (unsigned int num_pages_remaining = num_pages; num_pages_remaining > 0;)
+		for (uint32_t num_pages_remaining = num_pages; num_pages_remaining > 0;)
 		{
-			const auto page_offset = static_cast<uint32_t>(_file_stream.tellg()) % _header.page_size;
-			const auto size = std::min(num_pages_remaining * 4, _header.page_size - page_offset);
+			const auto page_off = static_cast<uint32_t>(_file_stream.tellg()) % _header.page_size;
+			const auto page_size = std::min(num_pages_remaining * 4, _header.page_size - page_off);
 
-			_file_stream.read(reinterpret_cast<char *>(stream.page_indices.data() + num_pages - num_pages_remaining), size);
+			_file_stream.read(reinterpret_cast<char *>(stream.page_indices.data() + num_pages - num_pages_remaining), page_size);
 
-			num_pages_remaining -= size / 4;
+			num_pages_remaining -= page_size / 4;
 
-			if (page_offset + size == _header.page_size)
-			{
-				// Advance to next root page
+			// Advance to next root page
+			if (page_off + page_size == _header.page_size)
 				_file_stream.seekg(root_pages[++current_root_page] * _header.page_size);
-			}
 		}
 	}
 
-	// Verify file
 	_is_valid = _file_stream.good();
 }
 
 std::vector<char> blink::msf_reader::stream(size_t index)
 {
 	const auto &stream = _streams[index];
-	std::vector<char> stream_data(stream.page_indices.size() * _header.page_size);
-	size_t offset = 0;
 
+	size_t offset = 0;
+	std::vector<char> stream_data( // Allocate enough memory to hold all associated pages
+		stream.page_indices.size() * _header.page_size);
+
+	// Iterate through all pages associated with this stream and read their data
 	for (auto page_index : stream.page_indices)
 	{
 		_file_stream.seekg(page_index * _header.page_size);
@@ -129,6 +129,7 @@ std::vector<char> blink::msf_reader::stream(size_t index)
 		offset += _header.page_size;
 	}
 
+	// Shrink result to the actual stream size
 	stream_data.resize(stream.size);
 
 	return stream_data;
@@ -158,17 +159,14 @@ size_t blink::msf_stream_reader::read(void *buffer, size_t size)
 template <>
 std::string blink::msf_stream_reader::read<std::string>()
 {
-	std::string result;
-
-	while (_stream_offset < _stream.size())
-	{
-		const auto c = _stream[_stream_offset++];
-
-		if (c == '\0')
-			break;
-
-		result += c;
-	}
-
+	std::string result(_stream.data() + _stream_offset);
+	_stream_offset += result.size() + 1; // String + terminating null
+	return result;
+}
+template <>
+std::string_view blink::msf_stream_reader::read<std::string_view>()
+{
+	std::string_view result(_stream.data() + _stream_offset);
+	_stream_offset += result.size() + 1;
 	return result;
 }

@@ -124,4 +124,5 @@ namespace blink
 	/// Extracts a null-terminated string from the stream.
 	/// </summary>
 	template <> std::string msf_stream_reader::read<std::string>();
+	template <> std::string_view msf_stream_reader::read<std::string_view>();
 }

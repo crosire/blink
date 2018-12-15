@@ -10,11 +10,9 @@
  * Microsoft program debug database file
  *
  * File is a multi-stream file with various different data streams. Some streams are located at a fixed index:
- *  - Stream 0: Previous MSF root directory
  *  - Stream 1: PDB headers and list of named streams
  *  - Stream 2: Type info (TPI stream)
  *  - Stream 3: Debug info (DBI stream)
- *  - Stream 4: CodeView records (IPI stream)
  */
 
 #pragma region PDB Headers
@@ -33,6 +31,15 @@ struct pdb_names_header
 	uint32_t signature;
 	uint32_t version;
 	uint32_t names_map_offset;
+};
+struct pdb_link_info_header
+{
+	uint32_t cb;
+	uint32_t version;
+	uint32_t cwd_offset;
+	uint32_t command_offset; // Example: link.exe -re -out:foo.exe
+	uint32_t out_file_begin_in_command; // Example: 18 (index of 'foo.exe' in command)
+	uint32_t libs_offset;
 };
 
 struct pdb_dbi_header
@@ -65,7 +72,7 @@ struct pdb_dbi_header
 };
 struct pdb_dbi_module_info
 {
-	uint32_t opened;
+	uint32_t is_opened;
 	struct {
 		uint16_t index;
 		uint16_t padding1;
@@ -129,18 +136,17 @@ blink::pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 		return;
 
 	// Read PDB info stream
-	msf_stream_reader pdb_stream = msf_reader::stream(1);
-
+	msf_stream_reader pdb_stream(msf_reader::stream(1));
 	if (pdb_stream.size() == 0)
 		return;
 
-	const pdb_header header = pdb_stream.read<pdb_header>();
+	const pdb_header &header = pdb_stream.read<pdb_header>();
 	_version = header.version;
 	_timestamp = header.time_date_stamp;
 	_guid = header.guid;
 
 	// Read stream names from string hash map
-	pdb_stream.seek(sizeof(header) + header.names_map_offset);
+	pdb_stream.skip(header.names_map_offset);
 
 	const auto count = pdb_stream.read<uint32_t>();
 	const auto hash_table_size = pdb_stream.read<uint32_t>();
@@ -163,7 +169,7 @@ blink::pdb_reader::pdb_reader(const std::string &path) : msf_reader(path)
 
 		const auto pos = pdb_stream.tell();
 		pdb_stream.seek(sizeof(header) + name_offset); // Seek into the string table that stores the name
-		const auto name = pdb_stream.read<std::string>();
+		const std::string name(pdb_stream.read_string());
 		pdb_stream.seek(pos); // Seek previous position in stream to read next name offset in the next iteration of this loop
 
 		_named_streams.insert({ name, stream_index });
@@ -174,21 +180,19 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 {
 	msf_stream_reader stream(msf_reader::stream(3));
 
-	const pdb_dbi_header header = stream.read<pdb_dbi_header>();
+	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
 		return;
 
 	// Find debug header stream (https://llvm.org/docs/PDB/DbiStream.html#optional-debug-header-stream)
-	stream.seek(sizeof(pdb_dbi_header) + header.module_info_size + header.section_contribution_size + header.section_map_size + header.file_info_size + header.ts_map_size + header.ec_info_size);
-	const pdb_dbi_debug_header debug_header = stream.read<pdb_dbi_debug_header>();
+	stream.skip(header.module_info_size + header.section_contribution_size + header.section_map_size + header.file_info_size + header.ts_map_size + header.ec_info_size);
+	const pdb_dbi_debug_header &debug_header = stream.read<pdb_dbi_debug_header>();
 
 	// Read section headers
 	msf_stream_reader section_stream(msf_reader::stream(debug_header.section_header));
-	std::vector<pdb_dbi_section_header> sections;
-	sections.reserve(section_stream.size() / sizeof(pdb_dbi_section_header));
-	// The section header stream is a tightly packed list of section header structures
-	while (section_stream.tell() < section_stream.size())
-		sections.push_back(std::move(section_stream.read<pdb_dbi_section_header>()));
+
+	const size_t num_sections = section_stream.size() / sizeof(pdb_dbi_section_header);
+	const pdb_dbi_section_header *sections = section_stream.data<pdb_dbi_section_header>();
 
 	// Read symbol table
 	stream = msf_reader::stream(header.symbol_record_stream);
@@ -199,30 +203,22 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 		// Each records starts with 2 bytes containing the size of the record after this element
 		const auto size = stream.read<uint16_t>();
 		// Next 2 bytes contain an enumeration depicting the type and format of the following data
-		const auto tag = stream.read<uint16_t>();
+		const auto code_view_tag = stream.read<uint16_t>();
 		// The next record is found by adding the current record size to the position of the previous size element
 		const auto next_record_offset = (stream.tell() - sizeof(uint16_t)) + size;
 
-		if (tag == 0x110E) // S_PUB32
+		if (code_view_tag == 0x110E) // S_PUB32
 		{
-			struct leaf_data
-			{
-				uint32_t is_code : 1;
-				uint32_t is_function : 1;
-				uint32_t is_managed : 1;
-				uint32_t is_managed_il : 1;
-				uint32_t padding : 28;
-				uint32_t offset;
-				uint16_t segment;
-			};
+			stream.skip(4); // Flags
+			const auto offset = stream.read<uint32_t>();
+			const auto section = stream.read<uint16_t>();
 
-			const auto info = stream.read<leaf_data>();
-			const auto mangled_name = stream.read<std::string>();
+			const std::string mangled_name(stream.read_string());
 
-			if (info.segment == 0 || info.segment > sections.size())
-				symbols[mangled_name] = reinterpret_cast<void *>(static_cast<uintptr_t>(info.offset)); // Relative address
+			if (section == 0 || section > num_sections)
+				symbols[mangled_name] = reinterpret_cast<void *>(static_cast<uintptr_t>(offset)); // Relative address
 			else
-				symbols[mangled_name] = image_base + info.offset + sections[info.segment - 1].virtual_address; // Absolute address
+				symbols[mangled_name] = image_base + offset + sections[section - 1].virtual_address; // Absolute address
 		}
 
 		stream.seek(next_record_offset);
@@ -236,16 +232,17 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 {
 	msf_stream_reader stream(msf_reader::stream(3));
 
-	const pdb_dbi_header header = stream.read<pdb_dbi_header>();
+	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
 		return;
 
 	// Read module information stream (https://llvm.org/docs/PDB/DbiStream.html#dbi-mod-info-substream)
 	while (stream.tell() < sizeof(pdb_dbi_header) + header.module_info_size)
 	{
-		const auto info = stream.read<pdb_dbi_module_info>();
-		const auto module_name = stream.read<std::string>();
-		const auto obj_file_name = stream.read<std::string>(); // Contains the name of the ".lib" if this object file is part of a library
+		stream.skip(sizeof(pdb_dbi_module_info));
+
+		const auto module_name = stream.read_string();
+		const auto obj_file_name = stream.read_string(); // Contains the name of the ".lib" if this object file is part of a library
 
 		object_files.push_back(module_name);
 
@@ -253,40 +250,57 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 	}
 }
 
-void blink::pdb_reader::read_source_files(std::vector<std::filesystem::path> &source_files)
+void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files)
 {
 	msf_stream_reader stream(msf_reader::stream(3));
 
-	const pdb_dbi_header header = stream.read<pdb_dbi_header>();
+	const pdb_dbi_header &header = stream.read<pdb_dbi_header>();
 	if (header.signature != 0xFFFFFFFF)
 		return;
 
 	// Find file information stream (https://llvm.org/docs/PDB/DbiStream.html#file-info-substream)
-	stream.seek(sizeof(pdb_dbi_header) + header.module_info_size + header.section_contribution_size + header.section_map_size);
+	stream.skip(header.module_info_size + header.section_contribution_size + header.section_map_size);
 
 	const uint16_t num_modules = stream.read<uint16_t>();
-	stream.skip(2 + num_modules * 2); // Skip module indices
+	stream.skip(2); // Skip old number of file names (see comment on counting the number below)
 
-	// Sum number of source files instead of reading the value from the header, since there may be more source files that would fit into a 16-bit value
+	const uint16_t *module_file_offsets = stream.data<uint16_t>();
+	const uint16_t *module_num_source_files = stream.data<uint16_t>(num_modules * 2);
+	const uint32_t *file_name_offsets = stream.data<uint32_t>(num_modules * 4);
+
+	// Count number of source files instead of reading the value from the header, since there may be more source files that would fit into a 16-bit value
 	uint32_t num_source_files = 0;
 	for (uint16_t i = 0; i < num_modules; ++i)
-		num_source_files += stream.read<uint16_t>();
+		num_source_files += module_num_source_files[i];
 
-	std::vector<uint32_t> file_name_offsets;
-	file_name_offsets.reserve(num_source_files);
-	for (uint32_t i = 0; i < num_source_files; ++i)
-		file_name_offsets.push_back(stream.read<uint32_t>());
+	stream.skip(num_modules * 4 + num_source_files * 4);
+	const auto offset = stream.tell();
 
-	auto offset = stream.tell();
+	source_files.resize(num_modules);
 
-	source_files.reserve(num_source_files);
-	for (uint32_t i = 0; i < num_source_files; ++i)
+	for (uint32_t k = 0; k < num_modules; ++k)
 	{
-		stream.seek(offset + file_name_offsets[i]);
-
-		const std::string source_file = stream.read<std::string>();
-		source_files.push_back(source_file);
+		for (uint32_t i = 0; i < module_num_source_files[k]; ++i)
+		{
+			stream.seek(offset + file_name_offsets[module_file_offsets[k] + i]);
+			source_files[k].push_back(stream.read_string());
+		}
 	}
+}
+
+void blink::pdb_reader::read_link_info(std::filesystem::path &cwd, std::string &cmd)
+{
+	msf_stream_reader stream(this->stream("/LinkInfo"));
+
+	if (!is_valid() || stream.size() == 0)
+		return;
+
+	// See https://github.com/Microsoft/microsoft-pdb/blob/master/langapi/include/pdb.h#L500
+	stream.skip(sizeof(pdb_link_info_header));
+
+	cwd = stream.read_string();
+	cmd = stream.read_string();
+	// Followed by another null-terminated string with all linked libraries
 }
 
 void blink::pdb_reader::read_name_hash_table(std::unordered_map<uint32_t, std::string> &names)
@@ -297,12 +311,12 @@ void blink::pdb_reader::read_name_hash_table(std::unordered_map<uint32_t, std::s
 		return;
 
 	// Read names stream
-	const auto header = stream.read<pdb_names_header>();
+	const pdb_names_header &header = stream.read<pdb_names_header>();
 	if (header.signature != 0xEFFEEFFE || header.version != 1)
 		return;
 
-	// Read string table
-	stream.seek(sizeof(pdb_names_header) + header.names_map_offset);
+	// Read the string table
+	stream.skip(header.names_map_offset);
 
 	const auto size = stream.read<uint32_t>();
 	names.reserve(size);
@@ -316,8 +330,8 @@ void blink::pdb_reader::read_name_hash_table(std::unordered_map<uint32_t, std::s
 			continue;
 
 		const auto pos = stream.tell();
-		stream.seek(sizeof(pdb_names_header) + name_offset);
-		const auto name = stream.read<std::string>();
+		stream.seek(sizeof(header) + name_offset);
+		const std::string name(stream.read_string());
 		stream.seek(pos); // Seek previous position in stream to read next name offset in the next iteration of this loop
 
 		names.insert({ i, name });

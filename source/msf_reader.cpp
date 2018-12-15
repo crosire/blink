@@ -156,15 +156,7 @@ size_t blink::msf_stream_reader::read(void *buffer, size_t size)
 	return size;
 }
 
-template <>
-std::string blink::msf_stream_reader::read<std::string>()
-{
-	std::string result(_stream.data() + _stream_offset);
-	_stream_offset += result.size() + 1; // String + terminating null
-	return result;
-}
-template <>
-std::string_view blink::msf_stream_reader::read<std::string_view>()
+std::string_view blink::msf_stream_reader::read_string()
 {
 	std::string_view result(_stream.data() + _stream_offset);
 	_stream_offset += result.size() + 1;

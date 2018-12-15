@@ -10,22 +10,6 @@
 #include <unordered_map>
 #include <Windows.h>
 
-static std::filesystem::path longest_path(const std::vector<std::filesystem::path> &paths)
-{
-	if (paths.empty())
-		return std::filesystem::path();
-
-	const std::wstring base_path = paths[0].parent_path().native() + std::filesystem::path::preferred_separator;
-	size_t length = base_path.size();
-
-	for (auto it = paths.begin() + 1; it != paths.end(); ++it)
-		length = it->native().size() < length ? it->native().size() : std::min(length, static_cast<size_t>(
-			std::distance(base_path.begin(),
-				std::mismatch(base_path.begin(), base_path.end(), it->native().begin(), it->native().end()).first)));
-
-	return base_path.substr(0, base_path.rfind(std::filesystem::path::preferred_separator, length != 0 ? length : std::string::npos));
-}
-
 blink::application::application()
 {
 	_image_base = reinterpret_cast<BYTE *>(GetModuleHandle(nullptr));
@@ -118,7 +102,12 @@ void blink::application::run()
 			// Check if the debug information actually matches the executable
 			if (pdb.guid() == debug_data->guid)
 			{
+				// The linker working directory should equal the project root directory
+				std::string linker_cmd;
+				pdb.read_link_info(_source_dir, linker_cmd);
+
 				pdb.read_symbol_table(_image_base, _symbols);
+				pdb.read_object_files(_object_files);
 				pdb.read_source_files(_source_files);
 			}
 			else
@@ -130,36 +119,6 @@ void blink::application::run()
 		else
 		{
 			print("  Error: Could not find path to program debug database in executable image.");
-			return;
-		}
-	}
-
-	{	std::vector<std::filesystem::path> cpp_files;
-
-		for (const auto &path : _source_files)
-		{
-			// Let's add include directories for all source files and their parent folders (two levels up)
-			for (size_t i = 0, offset = std::string::npos; i < 2; ++i, --offset)
-			{
-				offset = path.string().find_last_of('\\', offset);
-				if (offset == std::string::npos)
-					break;
-				_include_dirs.insert(path.string().substr(0, offset));
-			}
-
-			if (path.extension() == ".cpp" && std::filesystem::exists(path))
-			{
-				print("  Found source file: " + path.string());
-
-				cpp_files.push_back(path);
-			}
-		}
-
-		_source_dir = longest_path(cpp_files);
-
-		if (_source_dir.empty())
-		{
-			print("  Error: Could not determine project directory.");
 			return;
 		}
 	}
@@ -246,32 +205,17 @@ void blink::application::run()
 		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(watcher_buffer); first_notification || info->NextEntryOffset != 0;
 			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
 		{
-			const std::filesystem::path modified_file_path = _source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
+			std::filesystem::path object_file, source_file =
+				_source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
-			if (modified_file_path.extension() != ".cpp")
+			if (source_file.extension() != ".cpp")
 				continue;
 
-			std::filesystem::path object_file = modified_file_path; object_file.replace_extension(".obj");
-
-			print("Detected modification to: " + modified_file_path.string());
+			print("Detected modification to: " + source_file.string());
 
 			// Build compiler command line
-			std::string cmdline = "cl.exe "
-				"/c " // Compile only, do not link
-				"/nologo " // Suppress copyright message
-				"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
-				"/MDd " // Link with 'MSVCRTD.lib'
-				"/Od " // Disable optimizations
-				"/EHsc " // Enable C++ exceptions
-				"/std:c++latest " // C++ standard version
-				"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
-			for (const auto &define : _defines)
-				cmdline += " /D \"" + define + "\"";
-			for (const auto &include_path : _include_dirs)
-				cmdline += " /I \"" + include_path + "\"";
-			cmdline += " /Fo\"" + object_file.string() + "\""; // Output object file
-			cmdline += " \"" + modified_file_path.string() + "\""; // Input source code file
+			std::string cmdline = build_compile_command_line(source_file, object_file);
 
 			// Append special completion message
 			cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
@@ -313,4 +257,29 @@ void blink::application::run()
 	CloseHandle(watcher_handle);
 	CloseHandle(compiler_stdin);
 	CloseHandle(compiler_stdout);
+}
+
+std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file)
+{
+	object_file = source_file;
+	object_file.replace_extension(".obj");
+
+	std::string cmdline =
+		"cl.exe "
+		"/c " // Compile only, do not link
+		"/nologo " // Suppress copyright message
+		"/Z7 " // Enable COFF debug information (required for symbol parsing in blink_linker.cpp!)
+		"/MDd " // Link with 'MSVCRTD.lib'
+		"/Od " // Disable optimizations
+		"/EHsc " // Enable C++ exceptions
+		"/std:c++latest " // C++ standard version
+		"/Zc:wchar_t /Zc:forScope /Zc:inline"; // C++ language conformance
+	for (const auto &define : _defines)
+		cmdline += " /D \"" + define + "\"";
+	for (const auto &include_path : _include_dirs)
+		cmdline += " /I \"" + include_path + "\"";
+	cmdline += " /Fo\"" + object_file.string() + "\""; // Output object file
+	cmdline += " \"" + source_file.string() + "\""; // Input source code file
+
+	return cmdline;
 }

@@ -74,7 +74,12 @@ namespace blink
 		/// <summary>
 		/// Returns all source code file paths that were used to build the application.
 		/// </summary>
-		void read_source_files(std::vector<std::filesystem::path> &source_files);
+		void read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files);
+
+		/// <summary>
+		/// Read linker information.
+		/// </summary>
+		void read_link_info(std::filesystem::path &cwd, std::string &cmd);
 		/// <summary>
 		/// Returns the hash table of names found in the PDB file.
 		/// </summary>

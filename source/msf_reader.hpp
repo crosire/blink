@@ -79,6 +79,11 @@ namespace blink
 		size_t tell() const { return _stream_offset; }
 
 		/// <summary>
+		/// Returns a pointer to the current data.
+		/// </summary>
+		template <typename T = char> T *data(size_t offset = 0) { return reinterpret_cast<T *>(_stream.data() + _stream_offset + offset); }
+
+		/// <summary>
 		/// Increases the input position without reading any data from the stream.
 		/// </summary>
 		/// <param name="size">An offset in bytes from the current input position to the desired input position.</param>
@@ -108,21 +113,19 @@ namespace blink
 		/// <summary>
 		/// Extracts typed data from the stream.
 		/// </summary>
-		template <typename T> T read()
+		template <typename T> T &read()
 		{
-			T buffer = {};
-			read(&buffer, sizeof(buffer));
-			return buffer;
+			_stream_offset += sizeof(T);
+			return *reinterpret_cast<T *>(_stream.data() + _stream_offset - sizeof(T));
 		}
+
+		/// <summary>
+		/// Extracts a null-terminated string from the stream.
+		/// </summary>
+		std::string_view read_string();
 
 	private:
 		size_t _stream_offset = 0;
 		std::vector<char> _stream;
 	};
-
-	/// <summary>
-	/// Extracts a null-terminated string from the stream.
-	/// </summary>
-	template <> std::string msf_stream_reader::read<std::string>();
-	template <> std::string_view msf_stream_reader::read<std::string_view>();
 }

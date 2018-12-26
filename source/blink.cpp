@@ -11,6 +11,22 @@
 #include <unordered_map>
 #include <Windows.h>
 
+static std::filesystem::path longest_path(const std::vector<std::filesystem::path> &paths)
+{
+	if (paths.empty())
+		return std::filesystem::path();
+
+	const std::wstring base_path = paths[0].parent_path().native() + std::filesystem::path::preferred_separator;
+	size_t length = base_path.size();
+
+	for (auto it = paths.begin() + 1; it != paths.end(); ++it)
+		length = it->native().size() < length ? it->native().size() : std::min(length, static_cast<size_t>(
+			std::distance(base_path.begin(),
+				std::mismatch(base_path.begin(), base_path.end(), it->native().begin(), it->native().end()).first)));
+
+	return base_path.substr(0, base_path.rfind(std::filesystem::path::preferred_separator, length != 0 ? length : std::string::npos));
+}
+
 blink::application::application()
 {
 	_image_base = reinterpret_cast<BYTE *>(GetModuleHandle(nullptr));
@@ -111,6 +127,8 @@ void blink::application::run()
 				pdb.read_object_files(_object_files);
 				pdb.read_source_files(_source_files);
 
+				std::vector<std::filesystem::path> cpp_files;
+
 				for (size_t i = 0; i < _object_files.size(); ++i)
 				{
 					if (std::error_code ec; _object_files[i].extension() != ".obj" || !std::filesystem::exists(_object_files[i], ec))
@@ -120,8 +138,16 @@ void blink::application::run()
 						[](const auto &path) { return path.extension() == ".cpp"; });
 
 					if (it != _source_files[i].end())
+					{
 						print("  Found source file: " + it->string());
+
+						cpp_files.push_back(*it);
+					}
 				}
+
+				// Fall back to extracting project directory from source files if the link info stream is missing in the PDB
+				if (std::error_code ec; _source_dir.empty() || !std::filesystem::exists(_source_dir, ec))
+					_source_dir = longest_path(cpp_files);
 			}
 			else
 			{
@@ -134,6 +160,12 @@ void blink::application::run()
 			print("  Error: Could not find path to program debug database in executable image.");
 			return;
 		}
+	}
+
+	if (_source_dir.empty())
+	{
+		print("  Error: Could not determine project directory.");
+		return;
 	}
 
 	scoped_handle compiler_stdin, compiler_stdout;

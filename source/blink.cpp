@@ -11,20 +11,23 @@
 #include <unordered_map>
 #include <Windows.h>
 
-static std::filesystem::path longest_path(const std::vector<std::filesystem::path> &paths)
+static std::filesystem::path common_path(const std::vector<std::filesystem::path> &paths)
 {
 	if (paths.empty())
 		return std::filesystem::path();
 
-	const std::wstring base_path = paths[0].parent_path().native() + std::filesystem::path::preferred_separator;
-	size_t length = base_path.size();
+	std::filesystem::path all_common_path = paths[0].parent_path();
 
-	for (auto it = paths.begin() + 1; it != paths.end(); ++it)
-		length = it->native().size() < length ? it->native().size() : std::min(length, static_cast<size_t>(
-			std::distance(base_path.begin(),
-				std::mismatch(base_path.begin(), base_path.end(), it->native().begin(), it->native().end()).first)));
+	for (auto it = paths.begin() + 1; it != paths.end(); ++it) {
+		std::filesystem::path common_path;
+		std::filesystem::path file_directory = it->parent_path();
+		for (auto it2 = file_directory.begin(), it3 = all_common_path.begin(); it2 != file_directory.end() && it3 != all_common_path.end() && *it2 == *it3; ++it2, ++it3) {
+			common_path /= *it2;
+		}
+		all_common_path = common_path;
+	}
 
-	return base_path.substr(0, base_path.rfind(std::filesystem::path::preferred_separator, length != 0 ? length : std::string::npos));
+	return all_common_path;
 }
 
 blink::application::application()
@@ -145,9 +148,8 @@ void blink::application::run()
 					}
 				}
 
-				// Fall back to extracting project directory from source files if the link info stream is missing in the PDB
-				if (std::error_code ec; _source_dir.empty() || !std::filesystem::exists(_source_dir, ec))
-					_source_dir = longest_path(cpp_files);
+				// When the project is built out of source, PDB gives weird source directory. Use source common path instead.
+				_source_dir = common_path(cpp_files);
 			}
 			else
 			{
@@ -284,8 +286,17 @@ void blink::application::run()
 					print("Finished compiling \"" + object_file.string() + "\" with code " + exit_code + ".");
 
 					// Only load the compiled module if compilation was successful
-					if (exit_code == "0")
-						link(object_file);
+					if (exit_code == "0") {
+						// Whatever happens while linking, we do not want to have the *.obj file in repository.
+						try {
+							link(object_file);
+						}
+						catch (...) {
+							DeleteFileA(object_file.string().c_str());
+							throw;
+						}
+						DeleteFileA(object_file.string().c_str());
+					}
 					break;
 				}
 			}

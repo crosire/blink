@@ -148,7 +148,7 @@ void blink::application::run()
 					}
 				}
 
-				// When the project is built out of source, PDB gives weird source directory. Use source common path instead.
+				// The linker is invoked in solution directory, which may be out of source directory. Use source common path instead.
 				_source_dir = common_path(cpp_files);
 			}
 			else
@@ -286,20 +286,14 @@ void blink::application::run()
 					print("Finished compiling \"" + object_file.string() + "\" with code " + exit_code + ".");
 
 					// Only load the compiled module if compilation was successful
-					if (exit_code == "0") {
-						// Whatever happens while linking, we do not want to have the *.obj file in repository.
-						try {
-							link(object_file);
-						}
-						catch (...) {
-							DeleteFileA(object_file.string().c_str());
-							throw;
-						}
-						DeleteFileA(object_file.string().c_str());
-					}
+					if (exit_code == "0")
+						link(object_file);
 					break;
 				}
 			}
+
+			// The OBJ file is not needed anymore.
+			DeleteFileW(object_file.c_str());
 		}
 	}
 }

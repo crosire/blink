@@ -135,7 +135,10 @@ bool blink::application::link(const std::filesystem::path &path)
 	// Read COFF header from input file and check that it is of a valid format
 	IMAGE_FILE_HEADER header;
 	if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
+	{
+		print("Failed to read an image file header.");
 		return false;
+	}
 
 #ifdef _M_IX86
 	if (header.Machine != IMAGE_FILE_MACHINE_I386)
@@ -151,21 +154,30 @@ bool blink::application::link(const std::filesystem::path &path)
 	// Read section headers from input file (there is no optional header in COFF files, so it is right after the header read above)
 	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
 	if (DWORD read; !ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+	{
+		print("Failed to read an image file sections.");
 		return false;
+	}
 
 	// Read symbol table from input file
 	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
 
 	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols);
 	if (DWORD read; !ReadFile(file, symbols.data(), header.NumberOfSymbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
+	{
+		print("Failed to read an image file symbols.");
 		return false;
+	}
 
 	// The string table follows after the symbol table and is usually at the end of the file
 	const DWORD string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
 
 	std::vector<char> strings(string_table_size);
 	if (DWORD read; !ReadFile(file, strings.data(), string_table_size, &read, nullptr))
+	{
+		print("Failed to read a string table.");
 		return false;
+	}
 
 	// Calculate total module size
 	SIZE_T allocated_module_size = 0;
@@ -217,7 +229,10 @@ bool blink::application::link(const std::filesystem::path &path)
 			SetFilePointer(file, section.PointerToRawData, nullptr, FILE_BEGIN);
 
 			if (DWORD read; !ReadFile(file, section_base, section.SizeOfRawData, &read, nullptr))
+			{
+				print("Failed to read a section raw data.");
 				return false;
+			}
 		}
 
 		section.PointerToRawData = static_cast<DWORD>(section_base - module_base);
@@ -229,7 +244,10 @@ bool blink::application::link(const std::filesystem::path &path)
 			SetFilePointer(file, section.PointerToRelocations, nullptr, FILE_BEGIN);
 
 			if (DWORD read; !ReadFile(file, section_base, section.NumberOfRelocations * sizeof(IMAGE_RELOCATION), &read, nullptr))
+			{
+				print("Failed to read relocations.");
 				return false;
+			}
 		}
 
 		section.PointerToRelocations = static_cast<DWORD>(section_base - module_base);

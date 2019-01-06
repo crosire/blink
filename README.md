@@ -13,7 +13,7 @@ There now is a library which implements the same concept as blink but for Unix b
 
 ## Build
 
-There are no dependencies, blink is fully standalone. You only need a C++17 compliant version of MSVC 2017. Then just build the provided Visual Studio solution.
+There are no dependencies, blink is fully standalone (apart from the Windows SDK). You only need a C++17 compliant version of MSVC 2017. Then just build the provided Visual Studio solution.
 
 A quick overview of what each of the source code files contain:
 

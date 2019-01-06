@@ -298,7 +298,7 @@ void blink::application::run()
 	}
 }
 
-std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file)
+std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const
 {
 	Sleep(100); // Prevent file system error in the new few code lines
 

@@ -28,7 +28,7 @@ namespace blink
 		void run();
 		bool link(const std::filesystem::path &object_file);
 
-		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file);
+		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const;
 
 	private:
 		uint8_t *_image_base = nullptr;

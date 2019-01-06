@@ -1,6 +1,8 @@
 blink
 =====
 
+[![Build Status](https://ci.appveyor.com/api/projects/status/github/crosire/blink?svg=true)](https://ci.appveyor.com/project/crosire/blink)
+
 A tool that lets you edit the source code of a Windows C++ application live, while it is running, without having to go through the usual compile-and-restart cycle. It is effectivly a runtime linker that detects changes to source code files, compiles them and links them back into the running application, while patching all updated functions to jump to the new code.
 
 In contrast to similar projects, **blink does not require you to modify your C++ project in any way**. In fact it works on all x86/x86-64 applications as long as they were compiled with debug symbols (so that a PDB file is created) and you have their source code somewhere on your system.

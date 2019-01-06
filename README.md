@@ -14,13 +14,14 @@ There now is a library which implements the same concept as blink but for Unix b
 There are no dependencies, blink is fully standalone. You only need a C++17 compliant version of MSVC 2017. Then just build the provided Visual Studio solution.
 
 A quick overview of what each of the source code files contain:
-|File|Description|
-|---|---|
-|[blink.cpp](source/blink.cpp)|Application logic, filesystem watcher, main loop|
-|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching|
-|[main.cpp](source/main.cpp)|Main entry point, remote thread injection, console output loop|
-|[msf_reader.cpp](source/msf_reader.cpp)|Parser for the Microsoft MSF file format (which PDB files are based on)|
-|[pdb_reader.cpp](source/pdb_reader.cpp)|Parser for the Microsoft PDB file format|
+
+|File                                       |Description                                                            |
+|-------------------------------------------|-----------------------------------------------------------------------|
+|[blink.cpp](source/blink.cpp)              |Application logic, filesystem watcher, main loop                       |
+|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching            |
+|[main.cpp](source/main.cpp)                |Main entry point, remote thread injection, console output loop         |
+|[msf_reader.cpp](source/msf_reader.cpp)    |Parser for the Microsoft MSF file format (which PDB files are based on)|
+|[pdb_reader.cpp](source/pdb_reader.cpp)    |Parser for the Microsoft PDB file format                               |
 
 ## Usage
 

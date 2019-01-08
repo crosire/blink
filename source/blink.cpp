@@ -300,7 +300,7 @@ void blink::application::run()
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const
 {
-	Sleep(100); // Prevent file system error in the new few code lines
+	Sleep(100); // Prevent file system error in the next few code lines
 
 	std::string cmdline;
 
@@ -358,7 +358,10 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 					cmdline += value;
 			}
 		});
+	}
 
+	if (!cmdline.empty())
+	{
 		// Make sure to only compile and not link too
 		cmdline += " /c ";
 
@@ -380,7 +383,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 		remove_arg("ZI");
 		remove_arg("JMC");
 	}
-	else
+	else // Fall back to a default command-line if unable to find one
 	{
 		cmdline =
 			"cl.exe "
@@ -395,8 +398,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 	}
 
 	// Always write to a separate object file since the original one may be in user by a debugger
-	object_file = source_file;
-	object_file.replace_extension("temp.obj");
+	object_file = source_file; object_file.replace_extension("temp.obj");
 
 	// Append input source file to command-line
 	cmdline += '\"' + source_file.string() + '\"';

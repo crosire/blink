@@ -359,7 +359,8 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 			}
 		});
 
-		cmdline += ' ';
+		// Make sure to only compile and not link too
+		cmdline += " /c ";
 
 		// Remove some arguments from the command-line since they are set to different values below
 		const auto remove_arg = [&cmdline](std::string arg) {
@@ -395,7 +396,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 
 	// Always write to a separate object file since the original one may be in user by a debugger
 	object_file = source_file;
-	object_file.replace_extension(".obj");
+	object_file.replace_extension("temp.obj");
 
 	// Append input source file to command-line
 	cmdline += '\"' + source_file.string() + '\"';

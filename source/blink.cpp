@@ -249,6 +249,12 @@ void blink::application::run()
 			if (source_file.extension() != ".cpp")
 				continue;
 
+			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
+			if (const auto current_time = GetTickCount(); _last_modifications[source_file.string()] + 3000 > current_time)
+				continue;
+			else
+				_last_modifications[source_file.string()] = current_time;
+
 			print("Detected modification to: " + source_file.string());
 
 			// Build compiler command line

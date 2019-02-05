@@ -385,8 +385,10 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 		};
 
 		remove_arg("Fo");
-		remove_arg("Fd");
-		remove_arg("ZI");
+		remove_arg("Fd"); // The program debug database is currently in use by the running application, so cannot write to it
+		remove_arg("ZI"); // Do not create a program debug database, since all required debug information can be stored in the object file instead
+		remove_arg("Yu"); // Disable pre-compiled headers, since the data is not accessible here
+		remove_arg("Yc");
 		remove_arg("JMC");
 	}
 	else // Fall back to a default command-line if unable to find one

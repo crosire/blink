@@ -138,7 +138,7 @@ void blink::application::run()
 						continue;
 
 					const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
-						[](const auto &path) { return path.extension() == ".cpp"; });
+						[](const auto &path) { const auto ext = path.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx"; });
 
 					if (it != _source_files[i].end())
 					{
@@ -166,7 +166,7 @@ void blink::application::run()
 
 	if (_source_dir.empty())
 	{
-		print("  Error: Could not determine project directory.");
+		print("  Error: Could not determine project directory. Make sure all source code files are on the same drive.");
 		return;
 	}
 
@@ -246,7 +246,7 @@ void blink::application::run()
 				_source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
-			if (source_file.extension() != ".cpp")
+			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
 				continue;
 
 			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds

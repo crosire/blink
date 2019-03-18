@@ -37,8 +37,8 @@ Now simply do changes to any of the source code files of your application and se
 
 Optionally, if you define the following functions in your application, blink will call them before and after linking, which can be used to synchronize or save/restore application state:
 ```c++
-void __blink_sync(const char *source_file);
-void __blink_release(const char *source_file, bool success);
+extern "C" void __blink_sync(const char *source_file);
+extern "C" void __blink_release(const char *source_file, bool success);
 ```
 
 ## Concept

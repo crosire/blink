@@ -242,11 +242,14 @@ void blink::application::run()
 		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(watcher_buffer); first_notification || info->NextEntryOffset != 0;
 			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
 		{
-			std::filesystem::path object_file, source_file =
+			std::filesystem::path source_file =
 				_source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
-			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
+			const std::filesystem::path ext = source_file.extension();
+			const bool is_cpp_file = ext == ".c" || ext == ".cpp" || ext == ".cxx";
+			const bool is_hpp_file = ext == ".h" || ext == ".hpp" || ext == ".hxx";
+			if (!is_cpp_file && !is_hpp_file)
 				continue;
 
 			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
@@ -258,70 +261,82 @@ void blink::application::run()
 			print("Detected modification to: " + source_file.string());
 
 			// Build compiler command line
-			std::string cmdline = build_compile_command_line(source_file, object_file);
+			std::vector<std::pair<std::string, std::filesystem::path>> cmd_lines;
+			if (!build_compile_command_lines(source_file, is_hpp_file, cmd_lines))
+				continue; // Skip this file modification if something went wrong or the source file is an unreferenced header file
 
-			if (cmdline.empty())
-				continue; // Skip this file modification if something went wrong
-
-			// Append special completion message
-			cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
-
-			// Execute compiler command line
-			WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
-
-			// Read and react to compiler output messages
-			while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
+			for (auto &cmd_line : cmd_lines)
 			{
-				std::string message(size, '\0');
-				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
+				// Append special completion message
+				cmd_line.first += "\necho Finished compiling \"" + cmd_line.second.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
 
-				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
-					print(message.data() + offset, next - offset + 1);
+				// Execute compiler command line
+				WriteFile(compiler_stdin, cmd_line.first.c_str(), static_cast<DWORD>(cmd_line.first.size()), &size, nullptr);
 
-				// Listen for special completion message
-				if (const size_t offset = message.find(" with code "); offset != std::string::npos)
+				// Read and react to compiler output messages
+				while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
 				{
-					// Only load the compiled module if compilation was successful
-					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
-						link(object_file);
-					break;
-				}
-			}
+					std::string message(size, '\0');
+					ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
 
-			// The OBJ file is not needed anymore.
-			DeleteFileW(object_file.c_str());
+					for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
+						print(message.data() + offset, next - offset + 1);
+
+					// Listen for special completion message
+					if (const size_t offset = message.find(" with code "); offset != std::string::npos)
+					{
+						// Only load the compiled module if compilation was successful
+						if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
+							link(cmd_line.second);
+						break;
+					}
+				}
+
+				// The OBJ file is not needed anymore.
+				DeleteFileW(cmd_line.second.c_str());
+			}
 		}
 	}
 }
 
-std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const
+bool blink::application::build_compile_command_lines(const std::filesystem::path &source_file, bool is_header_file, std::vector<std::pair<std::string, std::filesystem::path>> &cmd_lines) const
 {
 	Sleep(100); // Prevent file system error in the next few code lines, TODO: figure out what causes this
 
-	std::string cmdline;
-
 	// Check if this source file already exists in the application in which case we can read some information from the original object file
-	if (const auto it = std::find_if(_source_files.begin(), _source_files.end(), [&source_file](const auto &module_files) {
-			return std::find_if(module_files.begin(), module_files.end(), [&source_file](const auto &file) {
-				std::error_code ec; return std::filesystem::equivalent(source_file, file, ec); }) != module_files.end();
-		}); it != _source_files.end())
+	for (size_t i = 0; i < _source_files.size(); ++i)
 	{
-		object_file = _object_files[std::distance(_source_files.begin(), it)];
+		const auto &module_files = _source_files[i];
+		if (std::find_if(module_files.begin(), module_files.end(), [&source_file](const auto &file) {
+				std::error_code ec; return std::filesystem::equivalent(source_file, file, ec);
+			}) == module_files.end())
+			continue; // Module does not contain this source file, continue to the next
+
+		// This is a module that references the source file, so add a command line to recompile it
+		auto &cmd_line = cmd_lines.emplace_back();
+		cmd_line.second = source_file;
+
+		if (is_header_file) // Need to find the source file for this module if compiling a header file
+			if (const auto it = std::find_if(module_files.begin(), module_files.end(), [](const auto &file) {
+					const auto ext = file.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx";
+				}); it != module_files.end())
+				cmd_line.second = *it;
+			else // Expect a module to contain a single C or C++ source file
+				return false;
 
 		stream_reader stream;
 		{
 			// Read original object file
-			const scoped_handle file = CreateFileW(object_file.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
+			const scoped_handle file = CreateFileW(_object_files[i].native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 			if (file == INVALID_HANDLE_VALUE)
-				return std::string();
+				return false;
 
 			IMAGE_FILE_HEADER header;
 			if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
-				return std::string();
+				return false;
 			std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
 			if (DWORD read; !ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
-				return std::string();
+				return false;
 
 			// Find first debug symbol section and read it
 			const auto section = std::find_if(sections.begin(), sections.end(), [](const auto &s) {
@@ -329,7 +344,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 			std::vector<char> debug_data(section->SizeOfRawData);
 			SetFilePointer(file, section->PointerToRawData, nullptr, FILE_BEGIN);
 			if (DWORD read; !ReadFile(file, debug_data.data(), section->SizeOfRawData, &read, nullptr))
-				return std::string();
+				return false;
 
 			stream = stream_reader(std::move(debug_data));
 		}
@@ -347,29 +362,51 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 				const std::string value(stream.read_string());
 
 				if (key == "cwd")
-					cmdline += "cd /D \"" + value + "\"\n";
+					cmd_line.first += "cd /D \"" + value + "\"\n";
 				else if (key == "cl") // Add compiler directories to path, so that 'mspdbcore.dll' is found
-					cmdline += "set PATH=%PATH%;" + value + "\\..\\..\\x86;" + value + "\\..\\..\\x64\n\"" + value + "\" ";
+					cmd_line.first += "set PATH=%PATH%;" + value + "\\..\\..\\x86;" + value + "\\..\\..\\x64\n\"" + value + "\" ";
 				else if (key == "cmd")
-					cmdline += value;
+					cmd_line.first += value;
 			}
 		});
 	}
 
-	if (!cmdline.empty())
+	if (cmd_lines.empty())
+	{
+		// Ignore changes to header files that aren't referenced by the application
+		if (is_header_file)
+		{
+			print("Warning: Ignoring unreferenced header file " + source_file.string() + ".\n");
+			return false;
+		}
+
+		// Fall back to a default command-line if unable to find one
+		cmd_lines.emplace_back(
+			"cl.exe "
+			"/nologo " // Suppress copyright message
+			"/Z7 " // Enable COFF debug information
+			"/MDd " // Link with 'MSVCRTD.lib'
+			"/Od " // Disable optimizations
+			"/EHsc " // Enable C++ exceptions
+			"/std:c++latest " // C++ standard version
+			"/Zc:wchar_t /Zc:forScope /Zc:inline ", // C++ language conformance
+			source_file);
+	}
+
+	for (auto &cmd_line : cmd_lines)
 	{
 		// Make sure to only compile and not link too
-		cmdline += " /c ";
+		cmd_line.first += " /c ";
 
 		// Remove some arguments from the command-line since they are set to different values below
-		const auto remove_arg = [&cmdline](std::string arg) {
+		const auto remove_arg = [&args = cmd_line.first](std::string arg) {
 			for (unsigned int k = 0; k < 2; ++k)
-				if (size_t offset = cmdline.find("-/"[k] + arg); offset != std::string::npos)
+				if (size_t offset = args.find("-/"[k] + arg); offset != std::string::npos)
 				{
-					if (cmdline[offset + 1 + arg.size()] != '\"')
-						cmdline.erase(offset, cmdline.find(' ', offset) - offset);
+					if (args[offset + 1 + arg.size()] != '\"')
+						args.erase(offset, args.find(' ', offset) - offset);
 					else
-						cmdline.erase(offset, cmdline.find('\"', offset + 2 + arg.size()) + 2 - offset);
+						args.erase(offset, args.find('\"', offset + 2 + arg.size()) + 2 - offset);
 					break;
 				}
 		};
@@ -380,29 +417,16 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 		remove_arg("Yu"); // Disable pre-compiled headers, since the data is not accessible here
 		remove_arg("Yc");
 		remove_arg("JMC");
-	}
-	else // Fall back to a default command-line if unable to find one
-	{
-		cmdline =
-			"cl.exe "
-			"/c " // Compile only, do not link
-			"/nologo " // Suppress copyright message
-			"/Z7 " // Enable COFF debug information
-			"/MDd " // Link with 'MSVCRTD.lib'
-			"/Od " // Disable optimizations
-			"/EHsc " // Enable C++ exceptions
-			"/std:c++latest " // C++ standard version
-			"/Zc:wchar_t /Zc:forScope /Zc:inline "; // C++ language conformance
+
+		// Append input source file to command-line
+		cmd_line.first += '\"' + cmd_line.second.string() + '\"';
+
+		// Always write to a separate object file since the original one may be in user by a debugger
+		cmd_line.second.replace_extension("temp.obj");
+
+		// Append output object file to command-line
+		cmd_line.first += " /Fo\"" + cmd_line.second.string() + '\"';
 	}
 
-	// Always write to a separate object file since the original one may be in user by a debugger
-	object_file = source_file; object_file.replace_extension("temp.obj");
-
-	// Append input source file to command-line
-	cmdline += '\"' + source_file.string() + '\"';
-
-	// Append output object file to command-line
-	cmdline += " /Fo\"" + object_file.string() + '\"';
-
-	return cmdline;
+	return true;
 }

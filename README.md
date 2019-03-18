@@ -35,6 +35,12 @@ Once you build blink, there are two ways to use it:
 
 Now simply do changes to any of the source code files of your application and see how they are reflected right away. Keep in mind that since blink patches on a function-level, you need a function that is repeatedly called, since changes are only made visible the next time a function is entered.
 
+Optionally, if you define the following functions in your application, blink will call them before and after linking, which can be used to synchronize or save/restore application state:
+```c++
+void __blink_sync(const char *source_file);
+void __blink_release(const char *source_file, bool success);
+```
+
 ## Concept
 
 Here is a quick run-down on how blink works:

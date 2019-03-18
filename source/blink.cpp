@@ -283,7 +283,11 @@ void blink::application::run()
 				{
 					// Only load the compiled module if compilation was successful
 					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
-						link(object_file);
+					{
+						call_symbol("__blink_sync", source_file.string().c_str()); // Notify application that we want to link an object file
+						const bool link_success = link(object_file);
+						call_symbol("__blink_release", source_file.string().c_str(), link_success); // Notify application that we have finished work
+					}
 					break;
 				}
 			}

@@ -264,7 +264,7 @@ void blink::application::run()
 				continue; // Skip this file modification if something went wrong
 
 			// Append special completion message
-			cmdline += "\necho compile complete %errorlevel%\n"; // Message used to confirm that compile finished in message loop above
+			cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
 
 			// Execute compiler command line
 			WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
@@ -276,23 +276,13 @@ void blink::application::run()
 				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
 
 				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
-				{
-					const auto line = message.substr(offset, next - offset);
-
-					// Only print error information
-					if (line.find("error") != std::string::npos || line.find("warning") != std::string::npos)
-						print(line.c_str());
-				}
+					print(message.data() + offset, next - offset + 1);
 
 				// Listen for special completion message
-				if (const size_t offset = message.find("compile complete"); offset != std::string::npos)
+				if (const size_t offset = message.find(" with code "); offset != std::string::npos)
 				{
-					const std::string exit_code = message.substr(offset + 17 /* compile complete */, message.find('\n', offset) - offset - 18);
-
-					print("Finished compiling \"" + object_file.string() + "\" with code " + exit_code + ".");
-
 					// Only load the compiled module if compilation was successful
-					if (exit_code == "0")
+					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
 						link(object_file);
 					break;
 				}
@@ -306,7 +296,7 @@ void blink::application::run()
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const
 {
-	Sleep(100); // Prevent file system error in the next few code lines
+	Sleep(100); // Prevent file system error in the next few code lines, TODO: figure out what causes this
 
 	std::string cmdline;
 

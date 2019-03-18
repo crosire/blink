@@ -115,7 +115,8 @@ namespace blink
 		/// <summary>
 		/// Returns a pointer to the current data.
 		/// </summary>
-		template <typename T = char> T *data(size_t offset = 0) { return reinterpret_cast<T *>(_stream.data() + _stream_offset + offset); }
+		template <typename T = char>
+		T *data(size_t offset = 0) { return reinterpret_cast<T *>(_stream.data() + _stream_offset + offset); }
 
 		/// <summary>
 		/// Increases the input position without reading any data from the stream.
@@ -157,7 +158,8 @@ namespace blink
 		/// <summary>
 		/// Extracts typed data from the stream.
 		/// </summary>
-		template <typename T> T &read()
+		template <typename T>
+		T &read()
 		{
 			_stream_offset += sizeof(T);
 			return *reinterpret_cast<T *>(_stream.data() + _stream_offset - sizeof(T));
@@ -166,7 +168,7 @@ namespace blink
 		/// <summary>
 		/// Extracts a null-terminated string from the stream.
 		/// </summary>
-		std::string_view blink::stream_reader::read_string()
+		std::string_view read_string()
 		{
 			std::string_view result(_stream.data() + _stream_offset);
 			_stream_offset += result.size() + 1;

@@ -122,7 +122,7 @@ struct thread_scope_guard : scoped_handle
 
 bool blink::application::link(const std::filesystem::path &path)
 {
-	thread_scope_guard _scope_guard_;
+	thread_scope_guard _scope_guard_; // Make sure the application doesn't access any of the code pages while they are being modified
 
 	const scoped_handle file = CreateFileW(path.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
@@ -194,7 +194,7 @@ bool blink::application::link(const std::filesystem::path &path)
 #endif
 	}
 
-	// Allocate executable memory region close to the executable image base.
+	// Allocate executable memory region close to the executable image base (this is done so that relative jumps like 'IMAGE_REL_AMD64_REL32' fit into the required 32-bit).
 	// Successfully loaded object files are never deallocated again to avoid corrupting the function rerouting generated below. The virtual memory is freed at process exit by Windows.
 	const auto module_base = static_cast<BYTE *>(VirtualAlloc(find_free_memory_region(_image_base, allocated_module_size), allocated_module_size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
 

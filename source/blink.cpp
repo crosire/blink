@@ -324,9 +324,23 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 		if (file != INVALID_HANDLE_VALUE)
 		{
 			DWORD read; IMAGE_FILE_HEADER header = {};
+			ANON_OBJECT_HEADER_BIGOBJ bigobj_header = {};
+			size_t nb_sections = 0;
 			ReadFile(file, &header, sizeof(header), &read, nullptr);
-			std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
-			ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr);
+
+			// Check if the file has been built with /bigobj. If that's the case, the header is in a different format:
+			if(header.Machine == 0x0000 && header.NumberOfSections == 0xffff)
+			{
+				SetFilePointer(file, 0, nullptr, FILE_BEGIN); // Rewind and read the the full header
+				ReadFile(file, &bigobj_header, sizeof(bigobj_header), &read, nullptr);
+				nb_sections = bigobj_header.NumberOfSections;
+			}
+			else
+			{
+				nb_sections = header.NumberOfSections;
+			}
+			std::vector<IMAGE_SECTION_HEADER> sections(nb_sections);
+			ReadFile(file, sections.data(), nb_sections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr);
 
 			// Find first debug symbol section and read it
 			const auto section = std::find_if(sections.begin(), sections.end(), [](const auto &s) {

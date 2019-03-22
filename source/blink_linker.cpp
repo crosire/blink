@@ -120,83 +120,73 @@ struct thread_scope_guard : scoped_handle
 	}
 };
 
-bool blink::application::link(const std::filesystem::path &path)
+
+struct generic_symbol_list
 {
-	thread_scope_guard _scope_guard_; // Make sure the application doesn't access any of the code pages while they are being modified
+	virtual size_t get_symbol_size() const = 0;
+	virtual void* data() = 0;
+	virtual bool is_extended() const = 0;
+	virtual size_t size() const = 0;
+};
 
-	const scoped_handle file = CreateFileW(path.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+template <typename T>
+struct symbol_list : generic_symbol_list
+{
+	std::vector<T> symbols;
 
-	if (file == INVALID_HANDLE_VALUE)
+	symbol_list(size_t nb_symbols) : symbols(nb_symbols)
+	{}
+
+
+	T& operator[](size_t index)
 	{
-		print("Failed to open input file.");
-		return false;
+		return symbols[index];
 	}
 
-	// Read COFF header from input file and check that it is of a valid format
-	IMAGE_FILE_HEADER header;
-	ANON_OBJECT_HEADER_BIGOBJ bigobj_header = {};
-	size_t nb_sections = 0; size_t nb_symbols = 0;
-	DWORD ptr_to_symbol_table = 0;
-	DWORD read = 0;
-
-	if (!ReadFile(file, &header, sizeof(header), &read, nullptr))
+	const T& operator[](size_t index) const
 	{
-		print("Failed to read an image file header.");
-		return false;
+		return symbols[index];
 	}
 
-#ifdef _M_IX86
-	if (header.Machine != IMAGE_FILE_MACHINE_I386)
-#endif
-#ifdef _M_AMD64
-	if (header.Machine != IMAGE_FILE_MACHINE_AMD64)
-#endif
+	 size_t get_symbol_size() const override
 	{
-		if(header.Machine == 0x0000 && header.NumberOfSections == 0xFFFF)
-		{
+		return sizeof(T);
+	}
 
-			SetFilePointer(file, 0, nullptr, FILE_BEGIN);
-			ReadFile(file, &bigobj_header, sizeof(bigobj_header), &read, nullptr);
 
-			nb_sections = bigobj_header.NumberOfSections;
-			nb_symbols = bigobj_header.NumberOfSymbols;
-			ptr_to_symbol_table = bigobj_header.PointerToSymbolTable;
+	void* data() override
+	{
+		return reinterpret_cast<void*>(symbols.data());
+	}
 
-		}
-		else
-		{
-			print("Input file is not of a valid format or was compiled for a different processor architecture.");
+
+	bool is_extended() const override
+	{
+		using image_symbol_type = std::decay_t<T>;
+		if constexpr (std::is_same_v<image_symbol_type, IMAGE_SYMBOL_EX>)
+			return true;
+		if constexpr (std::is_same_v<image_symbol_type, IMAGE_SYMBOL>)
 			return false;
-		}
+		throw std::runtime_error{ "Cannot use a type that is not IMAGE_SYMBOL_EX or IMAGE_SYMBOL with this template" };
 	}
 
-	else //machine is of expected type
+	size_t size() const override
 	{
-		nb_sections = header.NumberOfSections;
-		nb_symbols = header.NumberOfSymbols;
-		ptr_to_symbol_table = header.PointerToSymbolTable;
+		return symbols.size();
 	}
+};
 
-	// Read section headers from input file (there is no optional header in COFF files, so it is right after the header read above)
-	std::vector<IMAGE_SECTION_HEADER> sections(nb_sections);
-	if (!ReadFile(file, sections.data(), nb_sections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
-	{
-		print("Failed to read an image file sections.");
-		return false;
-	}
-
-	// Read symbol table from input file
-	SetFilePointer(file, ptr_to_symbol_table, nullptr, FILE_BEGIN);
-
-	std::vector<IMAGE_SYMBOL> symbols(nb_symbols);
-	if (!ReadFile(file, symbols.data(), nb_symbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
+template <typename T>
+bool perform_link_with_symbol_type(uint8_t* _image_base, std::unordered_map<std::string, void *>& _symbols, const scoped_handle& file, size_t nb_symbols, generic_symbol_list* symbols_ptr, DWORD& ptr_to_symbol_table, std::vector<IMAGE_SECTION_HEADER>& sections, DWORD& read)
+{
+	if (!ReadFile(file, symbols_ptr->data(), nb_symbols * symbols_ptr->get_symbol_size(), &read, nullptr))
 	{
 		print("Failed to read an image file symbols.");
 		return false;
 	}
 
 	// The string table follows after the symbol table and is usually at the end of the file
-	const DWORD string_table_size = GetFileSize(file, nullptr) - (ptr_to_symbol_table + nb_symbols * sizeof(IMAGE_SYMBOL));
+	const DWORD string_table_size = GetFileSize(file, nullptr) - (ptr_to_symbol_table + nb_symbols * symbols_ptr->get_symbol_size());
 
 	std::vector<char> strings(string_table_size);
 	if (!ReadFile(file, strings.data(), string_table_size, &read, nullptr))
@@ -317,7 +307,7 @@ bool blink::application::link(const std::filesystem::path &path)
 	for (DWORD i = 0; i < nb_symbols; i++)
 	{
 		BYTE *target_address = nullptr;
-		const IMAGE_SYMBOL &symbol = symbols[i];
+		const T&symbol = (dynamic_cast<symbol_list<T>*>(symbols_ptr))->symbols[i];
 
 		// Get symbol name from string table if it is a long name
 		std::string symbol_name;
@@ -356,7 +346,7 @@ bool blink::application::link(const std::filesystem::path &path)
 			}
 			else if (symbol.NumberOfAuxSymbols != 0)
 			{
-				const auto aux_symbol = reinterpret_cast<const IMAGE_AUX_SYMBOL_EX &>(symbols[i + 1]).Sym;
+				const auto aux_symbol = reinterpret_cast<const IMAGE_AUX_SYMBOL_EX &>((*dynamic_cast<symbol_list<T>*>(symbols_ptr))[i + 1]).Sym;
 
 				assert(aux_symbol.WeakDefaultSymIndex < i && "Unexpected symbol ordering for weak external symbol.");
 
@@ -409,7 +399,7 @@ bool blink::application::link(const std::filesystem::path &path)
 
 #ifdef _M_AMD64
 			// Add relay thunk if distance to target exceeds 32-bit range
-			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN(symbols[relocation.SymbolTableIndex].Type))
+			if (target_address - relocation_address > 0xFFFFFFFF && ISFCN((*dynamic_cast<symbol_list<T>*>(symbols_ptr))[relocation.SymbolTableIndex].Type))
 			{
 				write_jump(section_base, target_address);
 
@@ -441,36 +431,36 @@ bool blink::application::link(const std::filesystem::path &path)
 #endif
 #ifdef _M_AMD64
 				// Absolute virtual 64-bit address
-				case IMAGE_REL_AMD64_ADDR64:
-					*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
-					break;
+			case IMAGE_REL_AMD64_ADDR64:
+				*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
+				break;
 				// Absolute virtual 32-bit address
-				case IMAGE_REL_AMD64_ADDR32:
-					assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
-					break;
+			case IMAGE_REL_AMD64_ADDR32:
+				assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
+				break;
 				// Relative virtual address to __ImageBase
-				case IMAGE_REL_AMD64_ADDR32NB:
-					assert(target_address - _image_base == static_cast<int32_t>(target_address - _image_base) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _image_base);
-					break;
+			case IMAGE_REL_AMD64_ADDR32NB:
+				assert(target_address - _image_base == static_cast<int32_t>(target_address - _image_base) && "Address overflow in relative relocation.");
+				*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _image_base);
+				break;
 				// Relative virtual address to next instruction after relocation
-				case IMAGE_REL_AMD64_REL32:
-				case IMAGE_REL_AMD64_REL32_1:
-				case IMAGE_REL_AMD64_REL32_2:
-				case IMAGE_REL_AMD64_REL32_3:
-				case IMAGE_REL_AMD64_REL32_4:
-				case IMAGE_REL_AMD64_REL32_5:
-					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
-					break;
-				case IMAGE_REL_AMD64_SECREL:
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
-					break;
+			case IMAGE_REL_AMD64_REL32:
+			case IMAGE_REL_AMD64_REL32_1:
+			case IMAGE_REL_AMD64_REL32_2:
+			case IMAGE_REL_AMD64_REL32_3:
+			case IMAGE_REL_AMD64_REL32_4:
+			case IMAGE_REL_AMD64_REL32_5:
+				assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
+				*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
+				break;
+			case IMAGE_REL_AMD64_SECREL:
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
+				break;
 #endif
-				default:
-					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
-					break;
+			default:
+				print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
+				break;
 			}
 		}
 	}
@@ -484,4 +474,92 @@ bool blink::application::link(const std::filesystem::path &path)
 	print("Successfully linked object file into executable image.");
 
 	return true;
+}
+
+bool blink::application::link(const std::filesystem::path &path)
+{
+	thread_scope_guard _scope_guard_; // Make sure the application doesn't access any of the code pages while they are being modified
+
+	const scoped_handle file = CreateFileW(path.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		print("Failed to open input file.");
+		return false;
+	}
+
+	// Read COFF header from input file and check that it is of a valid format
+	IMAGE_FILE_HEADER header;
+	ANON_OBJECT_HEADER_BIGOBJ bigobj_header = {};
+	size_t nb_sections = 0; size_t nb_symbols = 0;
+	DWORD ptr_to_symbol_table = 0;
+	DWORD read = 0;
+	bool need_extended_symbol = false;
+
+	if (!ReadFile(file, &header, sizeof(header), &read, nullptr))
+	{
+		print("Failed to read an image file header.");
+		return false;
+	}
+
+#ifdef _M_IX86
+	if (header.Machine != IMAGE_FILE_MACHINE_I386)
+#endif
+#ifdef _M_AMD64
+	if (header.Machine != IMAGE_FILE_MACHINE_AMD64)
+#endif
+	{
+		if(header.Machine == 0x0000 && header.NumberOfSections == 0xFFFF)
+		{
+
+			SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+			ReadFile(file, &bigobj_header, sizeof(bigobj_header), &read, nullptr);
+
+			nb_sections = bigobj_header.NumberOfSections;
+			nb_symbols = bigobj_header.NumberOfSymbols;
+			ptr_to_symbol_table = bigobj_header.PointerToSymbolTable;
+			need_extended_symbol = true;
+
+		}
+		else
+		{
+			print("Input file is not of a valid format or was compiled for a different processor architecture.");
+			return false;
+		}
+	}
+
+	else //machine is of expected type
+	{
+		nb_sections = header.NumberOfSections;
+		nb_symbols = header.NumberOfSymbols;
+		ptr_to_symbol_table = header.PointerToSymbolTable;
+	}
+
+	// Read section headers from input file (there is no optional header in COFF files, so it is right after the header read above)
+	std::vector<IMAGE_SECTION_HEADER> sections(nb_sections);
+	if (!ReadFile(file, sections.data(), nb_sections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+	{
+		print("Failed to read an image file sections.");
+		return false;
+	}
+
+	// Read symbol table from input file
+	SetFilePointer(file, ptr_to_symbol_table, nullptr, FILE_BEGIN);
+
+	//std::vector<IMAGE_SYMBOL> symbols(nb_symbols);
+	std::unique_ptr<generic_symbol_list> symbols_ptr;
+
+	if(!need_extended_symbol)
+	{
+		symbols_ptr = std::make_unique<symbol_list<IMAGE_SYMBOL>>(nb_symbols);
+	}
+	else
+	{
+		symbols_ptr = std::make_unique<symbol_list<IMAGE_SYMBOL_EX>>(nb_symbols);
+	}
+
+
+	if(need_extended_symbol)
+		return perform_link_with_symbol_type<IMAGE_SYMBOL_EX>(_image_base, _symbols, file, nb_symbols, symbols_ptr.get(), ptr_to_symbol_table, sections, read);
+	return perform_link_with_symbol_type<IMAGE_SYMBOL>(_image_base, _symbols, file, nb_symbols, symbols_ptr.get(), ptr_to_symbol_table, sections, read);
 }

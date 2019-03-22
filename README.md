@@ -17,13 +17,14 @@ There are no dependencies, blink is fully standalone (apart from the Windows SDK
 
 A quick overview of what each of the source code files contain:
 
-|File                                       |Description                                                            |
-|-------------------------------------------|-----------------------------------------------------------------------|
-|[blink.cpp](source/blink.cpp)              |Application logic, filesystem watcher, main loop                       |
-|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching            |
-|[main.cpp](source/main.cpp)                |Main entry point, remote thread injection, console output loop         |
-|[msf_reader.cpp](source/msf_reader.cpp)    |Parser for the Microsoft MSF file format (which PDB files are based on)|
-|[pdb_reader.cpp](source/pdb_reader.cpp)    |Parser for the Microsoft PDB file format                               |
+|File                                       |Description                                                                    |
+|-------------------------------------------|-------------------------------------------------------------------------------|
+|[blink.cpp](source/blink.cpp)              |Application logic, filesystem watcher, main loop                               |
+|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching                    |
+|[main.cpp](source/main.cpp)                |Main entry point, remote thread injection, console output loop                 |
+|[coff_reader.cpp](source/coff_reader.cpp)  |Abstraction around a COFF file to deal with extended and non-extended OBJ files|
+|[msf_reader.cpp](source/msf_reader.cpp)    |Parser for the Microsoft MSF file format (which PDB files are based on)        |
+|[pdb_reader.cpp](source/pdb_reader.cpp)    |Parser for the Microsoft PDB file format                                       |
 
 ## Usage
 
@@ -40,6 +41,8 @@ Optionally, if you define the following functions in your application, blink wil
 extern "C" void __blink_sync(const char *source_file);
 extern "C" void __blink_release(const char *source_file, bool success);
 ```
+
+If blink has trouble finding the right compilation command for your project, make sure to check your build is generating PDB files (Program database in the build options), and prefer to use the `/ZI` ("edit and continue mode") switch over `/Z7` and `/Zi`
 
 ## Concept
 

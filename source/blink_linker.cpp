@@ -546,20 +546,16 @@ bool blink::application::link(const std::filesystem::path &path)
 	// Read symbol table from input file
 	SetFilePointer(file, ptr_to_symbol_table, nullptr, FILE_BEGIN);
 
-	//std::vector<IMAGE_SYMBOL> symbols(nb_symbols);
+	// Create templated symbol list
 	std::unique_ptr<generic_symbol_list> symbols_ptr;
-
 	if(!need_extended_symbol)
-	{
 		symbols_ptr = std::make_unique<symbol_list<IMAGE_SYMBOL>>(nb_symbols);
-	}
 	else
-	{
 		symbols_ptr = std::make_unique<symbol_list<IMAGE_SYMBOL_EX>>(nb_symbols);
-	}
 
-
+	// Perform link with the right kind of symbol records
 	if(need_extended_symbol)
 		return perform_link_with_symbol_type<IMAGE_SYMBOL_EX>(_image_base, _symbols, file, nb_symbols, symbols_ptr.get(), ptr_to_symbol_table, sections, read);
-	return perform_link_with_symbol_type<IMAGE_SYMBOL>(_image_base, _symbols, file, nb_symbols, symbols_ptr.get(), ptr_to_symbol_table, sections, read);
+	else
+		return perform_link_with_symbol_type<IMAGE_SYMBOL>(_image_base, _symbols, file, nb_symbols, symbols_ptr.get(), ptr_to_symbol_table, sections, read);
 }

@@ -134,7 +134,12 @@ bool blink::application::link(const std::filesystem::path &path)
 
 	// Read COFF header from input file and check that it is of a valid format
 	IMAGE_FILE_HEADER header;
-	if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
+	ANON_OBJECT_HEADER_BIGOBJ bigobj_header = {};
+	size_t nb_sections = 0; size_t nb_symbols = 0;
+	DWORD ptr_to_symbol_table = 0;
+	DWORD read = 0;
+
+	if (!ReadFile(file, &header, sizeof(header), &read, nullptr))
 	{
 		print("Failed to read an image file header.");
 		return false;
@@ -147,33 +152,54 @@ bool blink::application::link(const std::filesystem::path &path)
 	if (header.Machine != IMAGE_FILE_MACHINE_AMD64)
 #endif
 	{
-		print("Input file is not of a valid format or was compiled for a different processor architecture.");
-		return false;
+		if(header.Machine == 0x0000 && header.NumberOfSections == 0xFFFF)
+		{
+
+			SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+			ReadFile(file, &bigobj_header, sizeof(bigobj_header), &read, nullptr);
+
+			nb_sections = bigobj_header.NumberOfSections;
+			nb_symbols = bigobj_header.NumberOfSymbols;
+			ptr_to_symbol_table = bigobj_header.PointerToSymbolTable;
+
+		}
+		else
+		{
+			print("Input file is not of a valid format or was compiled for a different processor architecture.");
+			return false;
+		}
+	}
+
+	else //machine is of expected type
+	{
+		nb_sections = header.NumberOfSections;
+		nb_symbols = header.NumberOfSymbols;
+		ptr_to_symbol_table = header.PointerToSymbolTable;
 	}
 
 	// Read section headers from input file (there is no optional header in COFF files, so it is right after the header read above)
-	std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
-	if (DWORD read; !ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
+	std::vector<IMAGE_SECTION_HEADER> sections(nb_sections);
+	if (!ReadFile(file, sections.data(), nb_sections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr))
 	{
 		print("Failed to read an image file sections.");
 		return false;
 	}
 
 	// Read symbol table from input file
-	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
+	SetFilePointer(file, ptr_to_symbol_table, nullptr, FILE_BEGIN);
 
-	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols);
-	if (DWORD read; !ReadFile(file, symbols.data(), header.NumberOfSymbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
+	std::vector<IMAGE_SYMBOL> symbols(nb_symbols);
+	if (!ReadFile(file, symbols.data(), nb_symbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
 	{
 		print("Failed to read an image file symbols.");
 		return false;
 	}
 
 	// The string table follows after the symbol table and is usually at the end of the file
-	const DWORD string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
+	const DWORD string_table_size = GetFileSize(file, nullptr) - (ptr_to_symbol_table + nb_symbols * sizeof(IMAGE_SYMBOL));
 
 	std::vector<char> strings(string_table_size);
-	if (DWORD read; !ReadFile(file, strings.data(), string_table_size, &read, nullptr))
+	if (!ReadFile(file, strings.data(), string_table_size, &read, nullptr))
 	{
 		print("Failed to read a string table.");
 		return false;
@@ -228,7 +254,7 @@ bool blink::application::link(const std::filesystem::path &path)
 		{
 			SetFilePointer(file, section.PointerToRawData, nullptr, FILE_BEGIN);
 
-			if (DWORD read; !ReadFile(file, section_base, section.SizeOfRawData, &read, nullptr))
+			if (!ReadFile(file, section_base, section.SizeOfRawData, &read, nullptr))
 			{
 				print("Failed to read a section raw data.");
 				return false;
@@ -243,7 +269,7 @@ bool blink::application::link(const std::filesystem::path &path)
 		{
 			SetFilePointer(file, section.PointerToRelocations, nullptr, FILE_BEGIN);
 
-			if (DWORD read; !ReadFile(file, section_base, section.NumberOfRelocations * sizeof(IMAGE_RELOCATION), &read, nullptr))
+			if (!ReadFile(file, section_base, section.NumberOfRelocations * sizeof(IMAGE_RELOCATION), &read, nullptr))
 			{
 				print("Failed to read relocations.");
 				return false;
@@ -285,10 +311,10 @@ bool blink::application::link(const std::filesystem::path &path)
 	}
 
 	// Resolve internal and external symbols
-	std::vector<BYTE *> local_symbol_addresses(header.NumberOfSymbols);
+	std::vector<BYTE *> local_symbol_addresses(nb_symbols);
 	std::vector<std::pair<BYTE *, const BYTE *>> image_function_relocations;
 
-	for (DWORD i = 0; i < header.NumberOfSymbols; i++)
+	for (DWORD i = 0; i < nb_symbols; i++)
 	{
 		BYTE *target_address = nullptr;
 		const IMAGE_SYMBOL &symbol = symbols[i];

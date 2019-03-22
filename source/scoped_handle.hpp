@@ -15,6 +15,8 @@ struct scoped_handle
 		handle(INVALID_HANDLE_VALUE) {}
 	scoped_handle(HANDLE handle) :
 		handle(handle) {}
+	scoped_handle(scoped_handle &&other) :
+		handle(other.handle) { other.handle = NULL; }
 	~scoped_handle() { if (handle != NULL && handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
 
 	operator HANDLE() const { return handle; }

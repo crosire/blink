@@ -118,12 +118,14 @@
   <ItemGroup>
     <ClCompile Include="source\blink.cpp" />
     <ClCompile Include="source\blink_linker.cpp" />
+    <ClCompile Include="source\coff_reader.cpp" />
     <ClCompile Include="source\msf_reader.cpp" />
     <ClCompile Include="source\pdb_reader.cpp" />
     <ClCompile Include="source\main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\blink.hpp" />
+    <ClInclude Include="source\coff_reader.hpp" />
     <ClInclude Include="source\msf_reader.hpp" />
     <ClInclude Include="source\pdb_reader.hpp" />
     <ClInclude Include="source\scoped_handle.hpp" />

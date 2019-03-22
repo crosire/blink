@@ -3,6 +3,7 @@
   <ItemGroup>
     <ClCompile Include="source\blink.cpp" />
     <ClCompile Include="source\blink_linker.cpp" />
+    <ClCompile Include="source\coff_reader.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\msf_reader.cpp">
       <Filter>pdb</Filter>
@@ -13,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\blink.hpp" />
+    <ClInclude Include="source\coff_reader.hpp" />
     <ClInclude Include="source\pdb_reader.hpp">
       <Filter>pdb</Filter>
     </ClInclude>

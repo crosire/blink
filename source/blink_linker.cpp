@@ -4,6 +4,7 @@
  */
 
 #include "blink.hpp"
+#include "coff_reader.hpp"
 #include "scoped_handle.hpp"
 #include <assert.h>
 #include <Windows.h>
@@ -122,23 +123,21 @@ struct thread_scope_guard : scoped_handle
 
 bool blink::application::link(const std::filesystem::path &path)
 {
-	thread_scope_guard _scope_guard_; // Make sure the application doesn't access any of the code pages while they are being modified
-
-	const scoped_handle file = CreateFileW(path.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
+	// Object file can be a normal COFF or an extended COFF
+	COFF_HEADER header;
+	const scoped_handle file = open_coff_file(path, header);
 	if (file == INVALID_HANDLE_VALUE)
-	{
-		print("Failed to open input file.");
 		return false;
-	}
 
-	// Read COFF header from input file and check that it is of a valid format
-	IMAGE_FILE_HEADER header;
-	if (DWORD read; !ReadFile(file, &header, sizeof(header), &read, nullptr))
-	{
-		print("Failed to read an image file header.");
-		return false;
-	}
+	return !header.is_extended() ?
+		link<IMAGE_SYMBOL>(file, header.obj) :
+		link<IMAGE_SYMBOL_EX>(file, header.bigobj);
+}
+
+template <typename SYMBOL_TYPE, typename HEADER_TYPE>
+bool blink::application::link(HANDLE file, const HEADER_TYPE &header)
+{
+	thread_scope_guard _scope_guard_; // Make sure the application doesn't access any of the code pages while they are being modified
 
 #ifdef _M_IX86
 	if (header.Machine != IMAGE_FILE_MACHINE_I386)
@@ -162,15 +161,15 @@ bool blink::application::link(const std::filesystem::path &path)
 	// Read symbol table from input file
 	SetFilePointer(file, header.PointerToSymbolTable, nullptr, FILE_BEGIN);
 
-	std::vector<IMAGE_SYMBOL> symbols(header.NumberOfSymbols);
-	if (DWORD read; !ReadFile(file, symbols.data(), header.NumberOfSymbols * sizeof(IMAGE_SYMBOL), &read, nullptr))
+	std::vector<SYMBOL_TYPE> symbols(header.NumberOfSymbols);
+	if (DWORD read; !ReadFile(file, symbols.data(), header.NumberOfSymbols * sizeof(SYMBOL_TYPE), &read, nullptr))
 	{
 		print("Failed to read an image file symbols.");
 		return false;
 	}
 
 	// The string table follows after the symbol table and is usually at the end of the file
-	const DWORD string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(IMAGE_SYMBOL));
+	const DWORD string_table_size = GetFileSize(file, nullptr) - (header.PointerToSymbolTable + header.NumberOfSymbols * sizeof(SYMBOL_TYPE));
 
 	std::vector<char> strings(string_table_size);
 	if (DWORD read; !ReadFile(file, strings.data(), string_table_size, &read, nullptr))
@@ -291,7 +290,7 @@ bool blink::application::link(const std::filesystem::path &path)
 	for (DWORD i = 0; i < header.NumberOfSymbols; i++)
 	{
 		BYTE *target_address = nullptr;
-		const IMAGE_SYMBOL &symbol = symbols[i];
+		const SYMBOL_TYPE &symbol = symbols[i];
 
 		// Get symbol name from string table if it is a long name
 		std::string symbol_name;
@@ -394,57 +393,57 @@ bool blink::application::link(const std::filesystem::path &path)
 			switch (relocation.Type)
 			{
 #ifdef _M_IX86
-				// No relocation necessary
-				case IMAGE_REL_I386_ABSOLUTE:
-					break;
-				// Absolute virtual address
-				case IMAGE_REL_I386_DIR32:
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
-					break;
-				// Relative virtual address to __ImageBase
-				case IMAGE_REL_I386_DIR32NB:
-					*reinterpret_cast< int32_t *>(relocation_address) = target_address - _image_base;
-					break;
-				// Relative to next instruction after relocation
-				case IMAGE_REL_I386_REL32:
-					*reinterpret_cast< int32_t *>(relocation_address) = target_address - (relocation_address + 4);
-					break;
-				case IMAGE_REL_I386_SECREL:
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
-					break;
+			// No relocation necessary
+			case IMAGE_REL_I386_ABSOLUTE:
+				break;
+			// Absolute virtual address
+			case IMAGE_REL_I386_DIR32:
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
+				break;
+			// Relative virtual address to __ImageBase
+			case IMAGE_REL_I386_DIR32NB:
+				*reinterpret_cast< int32_t *>(relocation_address) = target_address - _image_base;
+				break;
+			// Relative to next instruction after relocation
+			case IMAGE_REL_I386_REL32:
+				*reinterpret_cast< int32_t *>(relocation_address) = target_address - (relocation_address + 4);
+				break;
+			case IMAGE_REL_I386_SECREL:
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
+				break;
 #endif
 #ifdef _M_AMD64
-				// Absolute virtual 64-bit address
-				case IMAGE_REL_AMD64_ADDR64:
-					*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
-					break;
-				// Absolute virtual 32-bit address
-				case IMAGE_REL_AMD64_ADDR32:
-					assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
-					break;
-				// Relative virtual address to __ImageBase
-				case IMAGE_REL_AMD64_ADDR32NB:
-					assert(target_address - _image_base == static_cast<int32_t>(target_address - _image_base) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _image_base);
-					break;
-				// Relative virtual address to next instruction after relocation
-				case IMAGE_REL_AMD64_REL32:
-				case IMAGE_REL_AMD64_REL32_1:
-				case IMAGE_REL_AMD64_REL32_2:
-				case IMAGE_REL_AMD64_REL32_3:
-				case IMAGE_REL_AMD64_REL32_4:
-				case IMAGE_REL_AMD64_REL32_5:
-					assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
-					*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
-					break;
-				case IMAGE_REL_AMD64_SECREL:
-					*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
-					break;
+			// Absolute virtual 64-bit address
+			case IMAGE_REL_AMD64_ADDR64:
+				*reinterpret_cast<uint64_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address);
+				break;
+			// Absolute virtual 32-bit address
+			case IMAGE_REL_AMD64_ADDR32:
+				assert(reinterpret_cast<uint64_t>(target_address) >> 32 == 0 && "Address overflow in absolute relocation.");
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFFFFFFF;
+				break;
+			// Relative virtual address to __ImageBase
+			case IMAGE_REL_AMD64_ADDR32NB:
+				assert(target_address - _image_base == static_cast<int32_t>(target_address - _image_base) && "Address overflow in relative relocation.");
+				*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - _image_base);
+				break;
+			// Relative virtual address to next instruction after relocation
+			case IMAGE_REL_AMD64_REL32:
+			case IMAGE_REL_AMD64_REL32_1:
+			case IMAGE_REL_AMD64_REL32_2:
+			case IMAGE_REL_AMD64_REL32_3:
+			case IMAGE_REL_AMD64_REL32_4:
+			case IMAGE_REL_AMD64_REL32_5:
+				assert(target_address - relocation_address == static_cast<int32_t>(target_address - relocation_address) && "Address overflow in relative relocation.");
+				*reinterpret_cast< int32_t *>(relocation_address) = static_cast<int32_t>(target_address - (relocation_address + 4 + (relocation.Type - IMAGE_REL_AMD64_REL32)));
+				break;
+			case IMAGE_REL_AMD64_SECREL:
+				*reinterpret_cast<uint32_t *>(relocation_address) = reinterpret_cast<uintptr_t>(target_address) & 0xFFF; // TODO: This was found by comparing generated ASM, probably not correct
+				break;
 #endif
-				default:
-					print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
-					break;
+			default:
+				print("Unimplemented relocation type '" + std::to_string(relocation.Type) + "'.");
+				break;
 			}
 		}
 	}

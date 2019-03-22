@@ -5,6 +5,7 @@
 
 #include "blink.hpp"
 #include "pdb_reader.hpp"
+#include "coff_reader.hpp"
 #include "scoped_handle.hpp"
 #include <string>
 #include <algorithm>
@@ -297,16 +298,7 @@ void blink::application::run()
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const
 {
-	// Default command-line if unable to extract it below
-	std::string cmdline =
-		"cl.exe "
-		"/nologo " // Suppress copyright message
-		"/Z7 " // Enable COFF debug information
-		"/MDd " // Link with 'MSVCRTD.lib'
-		"/Od " // Disable optimizations
-		"/EHsc " // Enable C++ exceptions
-		"/std:c++latest " // C++ standard version
-		"/Zc:wchar_t /Zc:forScope /Zc:inline "; // C++ language conformance
+	std::string cmdline;
 
 	Sleep(100); // Prevent file system error in the next few code lines, TODO: figure out what causes this
 
@@ -319,14 +311,13 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 		object_file = _object_files[std::distance(_source_files.begin(), it)];
 
 		// Read original object file
-		const scoped_handle file = CreateFileW(object_file.native().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
+		COFF_HEADER header;
+		const scoped_handle file = open_coff_file(object_file, header);
 		if (file != INVALID_HANDLE_VALUE)
 		{
-			DWORD read; IMAGE_FILE_HEADER header = {};
-			ReadFile(file, &header, sizeof(header), &read, nullptr);
-			std::vector<IMAGE_SECTION_HEADER> sections(header.NumberOfSections);
-			ReadFile(file, sections.data(), header.NumberOfSections * sizeof(IMAGE_SECTION_HEADER), &read, nullptr);
+			DWORD read = header.is_extended() ? header.bigobj.NumberOfSections : header.obj.NumberOfSections;
+			std::vector<IMAGE_SECTION_HEADER> sections(read);
+			ReadFile(file, sections.data(), read * sizeof(IMAGE_SECTION_HEADER), &read, nullptr);
 
 			// Find first debug symbol section and read it
 			const auto section = std::find_if(sections.begin(), sections.end(), [](const auto &s) {
@@ -363,6 +354,19 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 				});
 			}
 		}
+	}
+
+	// Fall back to default command-line if unable to extract it
+	if (cmdline.empty())
+	{
+		cmdline = "cl.exe "
+			"/nologo " // Suppress copyright message
+			"/Z7 " // Enable COFF debug information
+			"/MDd " // Link with 'MSVCRTD.lib'
+			"/Od " // Disable optimizations
+			"/EHsc " // Enable C++ exceptions
+			"/std:c++latest " // C++ standard version
+			"/Zc:wchar_t /Zc:forScope /Zc:inline "; // C++ language conformance
 	}
 
 	// Make sure to only compile and not link too

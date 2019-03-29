@@ -17,14 +17,14 @@ There are no dependencies, blink is fully standalone (apart from the Windows SDK
 
 A quick overview of what each of the source code files contain:
 
-|File                                       |Description                                                                    |
-|-------------------------------------------|-------------------------------------------------------------------------------|
-|[blink.cpp](source/blink.cpp)              |Application logic, filesystem watcher, main loop                               |
-|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching                    |
-|[main.cpp](source/main.cpp)                |Main entry point, remote thread injection, console output loop                 |
-|[coff_reader.cpp](source/coff_reader.cpp)  |Abstraction around a COFF file to deal with extended and non-extended OBJ files|
-|[msf_reader.cpp](source/msf_reader.cpp)    |Parser for the Microsoft MSF file format (which PDB files are based on)        |
-|[pdb_reader.cpp](source/pdb_reader.cpp)    |Parser for the Microsoft PDB file format                                       |
+|File                                       |Description                                                            |
+|-------------------------------------------|-----------------------------------------------------------------------|
+|[blink.cpp](source/blink.cpp)              |Application logic, filesystem watcher, main loop                       |
+|[blink_linker.cpp](source/blink_linker.cpp)|COFF loader and linker, symbol resolving, function patching            |
+|[main.cpp](source/main.cpp)                |Main entry point, remote thread injection, console output loop         |
+|[coff_reader.cpp](source/coff_reader.cpp)  |Abstraction around COFF to deal with extended OBJ files (`/bigobj`)    |
+|[msf_reader.cpp](source/msf_reader.cpp)    |Parser for the MSF file format (which PDB files are based on)          |
+|[pdb_reader.cpp](source/pdb_reader.cpp)    |Parser for the Microsoft PDB file format                               |
 
 ## Usage
 
@@ -36,13 +36,13 @@ Once you build blink, there are two ways to use it:
 
 Now simply do changes to any of the source code files of your application and see how they are reflected right away. Keep in mind that since blink patches on a function-level, you need a function that is repeatedly called, since changes are only made visible the next time a function is entered.
 
+If blink has trouble finding the right compilation command-line for your project, make sure to check your build is generating PDB files with the `/ZI` compile option (blink has to fall back to a default command-line otherwise).
+
 Optionally, if you define the following functions in your application, blink will call them before and after linking, which can be used to synchronize or save/restore application state:
 ```c++
 extern "C" void __blink_sync(const char *source_file);
 extern "C" void __blink_release(const char *source_file, bool success);
 ```
-
-If blink has trouble finding the right compilation command for your project, make sure to check your build is generating PDB files (Program database in the build options), and prefer to use the `/ZI` ("edit and continue mode") switch over `/Z7` and `/Zi`
 
 ## Concept
 

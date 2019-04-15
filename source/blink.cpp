@@ -40,129 +40,41 @@ blink::application::application()
 
 void blink::application::run()
 {
-	DWORD size = 0;
-
-	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(_image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(_image_base)->e_lfanew);
+	std::vector<const BYTE *> dlls;
 
 	{	print("Reading PE import directory ...");
 
-		// Search import directory for additional symbols
-		const IMAGE_DATA_DIRECTORY import_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-		const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(_image_base + import_directory.VirtualAddress);
-
-		for (unsigned int i = 0; import_directory_entries[i].FirstThunk != 0; i++)
-		{
-			const auto name = reinterpret_cast<const char *>(_image_base + import_directory_entries[i].Name);
-			const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].Characteristics);
-			const auto import_address_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].FirstThunk);
-
-			for (unsigned int k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
-			{
-				const char *import_name = nullptr;
-
-				// We need to figure out the name of symbols imported by ordinal by going through the export table of the target module
-				if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
-				{
-					// The module should have already been loaded by Windows when the application was launched, so just get its handle here
-					const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
-					if (target_base == nullptr)
-						continue; // Bail out if that is not the case to be safe
-
-					const auto target_headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(target_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(target_base)->e_lfanew);
-					const auto export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(target_base + target_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
-					const auto export_name_strings = reinterpret_cast<const DWORD *>(target_base + export_directory->AddressOfNames);
-					const auto export_name_ordinals = reinterpret_cast<const WORD *>(target_base + export_directory->AddressOfNameOrdinals);
-
-					const auto ordinal = std::find(export_name_ordinals, export_name_ordinals + export_directory->NumberOfNames, IMAGE_ORDINAL(import_name_table[k].u1.Ordinal));
-					if (ordinal != export_name_ordinals + export_directory->NumberOfNames)
-						import_name = reinterpret_cast<const char *>(target_base + export_name_strings[std::distance(export_name_ordinals, ordinal)]);
-					else
-						continue; // Ignore ordinal imports for which the name could not be resolved
-				}
-				else
-				{
-					import_name = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(_image_base + import_name_table[k].u1.AddressOfData)->Name;
-				}
-
-				_symbols.insert({ import_name, reinterpret_cast<void *>(import_address_table[k].u1.AddressOfData) });
-			}
-		}
+		read_import_address_table(_image_base);
 	}
 
 	{	print("Reading PE debug info directory ...");
 
-		struct RSDS_DEBUG_FORMAT
+		if (!read_debug_info(_image_base))
 		{
-			uint32_t signature;
-			guid guid;
-			uint32_t age;
-			char path[1];
-		} const *debug_data = nullptr;
-
-		// Search debug directory for program debug database file name
-		const IMAGE_DATA_DIRECTORY debug_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
-		const auto debug_directory_entries = reinterpret_cast<const IMAGE_DEBUG_DIRECTORY *>(_image_base + debug_directory.VirtualAddress);
-
-		for (unsigned int i = 0; i < debug_directory.Size / sizeof(IMAGE_DEBUG_DIRECTORY); i++)
-		{
-			if (debug_directory_entries[i].Type == IMAGE_DEBUG_TYPE_CODEVIEW)
-			{
-				debug_data = reinterpret_cast<const RSDS_DEBUG_FORMAT *>(reinterpret_cast<const BYTE *>(_image_base + debug_directory_entries[i].AddressOfRawData));
-
-				if (debug_data->signature == 0x53445352) // RSDS
-					break;
-			}
-		}
-
-		if (debug_data != nullptr)
-		{
-			print("  Found program debug database: " + std::string(debug_data->path));
-
-			pdb_reader pdb(debug_data->path);
-
-			// Check if the debug information actually matches the executable
-			if (pdb.guid() == debug_data->guid)
-			{
-				// The linker working directory should equal the project root directory
-				std::string linker_cmd;
-				pdb.read_link_info(_source_dir, linker_cmd);
-
-				pdb.read_symbol_table(_image_base, _symbols);
-				pdb.read_object_files(_object_files);
-				pdb.read_source_files(_source_files);
-
-				std::vector<std::filesystem::path> cpp_files;
-
-				for (size_t i = 0; i < _object_files.size(); ++i)
-				{
-					if (std::error_code ec; _object_files[i].extension() != ".obj" || !std::filesystem::exists(_object_files[i], ec))
-						continue;
-
-					const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
-						[](const auto &path) { const auto ext = path.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx"; });
-
-					if (it != _source_files[i].end())
-					{
-						print("  Found source file: " + it->string());
-
-						cpp_files.push_back(*it);
-					}
-				}
-
-				// The linker is invoked in solution directory, which may be out of source directory. Use source common path instead.
-				_source_dir = common_path(cpp_files);
-			}
-			else
-			{
-				print("  Error: Program debug database was created for a different executable file.");
-				return;
-			}
-		}
-		else
-		{
-			print("  Error: Could not find path to program debug database in executable image.");
+			print("  Error: Could not find path to matching program debug database in executable image.");
 			return;
 		}
+
+		std::vector<std::filesystem::path> cpp_files;
+
+		for (size_t i = 0; i < _object_files.size(); ++i)
+		{
+			if (std::error_code ec; _object_files[i].extension() != ".obj" || !std::filesystem::exists(_object_files[i], ec))
+				continue;
+
+			const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
+				[](const auto &path) { const auto ext = path.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx"; });
+
+			if (it != _source_files[i].end())
+			{
+				print("  Found source file: " + it->string());
+
+				cpp_files.push_back(*it);
+			}
+		}
+
+		// The linker is invoked in solution directory, which may be out of source directory. Use source common path instead.
+		_source_dir = common_path(cpp_files);
 	}
 
 	if (_source_dir.empty())
@@ -232,7 +144,7 @@ void blink::application::run()
 		return;
 	}
 
-	BYTE watcher_buffer[4096];
+	DWORD size = 0; BYTE watcher_buffer[4096];
 
 	// Check for modifications to any of the source code files
 	while (ReadDirectoryChangesW(watcher_handle, watcher_buffer, sizeof(watcher_buffer), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, nullptr, nullptr))
@@ -293,6 +205,106 @@ void blink::application::run()
 			// The OBJ file is not needed anymore.
 			DeleteFileW(object_file.c_str());
 		}
+	}
+}
+
+bool blink::application::read_debug_info(const BYTE *image_base)
+{
+	struct RSDS_DEBUG_FORMAT
+	{
+		uint32_t signature;
+		guid guid;
+		uint32_t age;
+		char path[1];
+	} const *debug_data = nullptr;
+
+	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(
+		image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(image_base)->e_lfanew);
+
+	// Search debug directory for program debug database file name
+	const IMAGE_DATA_DIRECTORY &debug_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
+	const auto debug_directory_entries = reinterpret_cast<const IMAGE_DEBUG_DIRECTORY *>(
+		image_base + debug_directory.VirtualAddress);
+
+	for (unsigned int i = 0; i < debug_directory.Size / sizeof(IMAGE_DEBUG_DIRECTORY); ++i)
+	{
+		if (debug_directory_entries[i].Type == IMAGE_DEBUG_TYPE_CODEVIEW)
+		{
+			debug_data = reinterpret_cast<const RSDS_DEBUG_FORMAT *>(
+				image_base + debug_directory_entries[i].AddressOfRawData);
+			if (debug_data->signature == 0x53445352) // RSDS
+				break;
+		}
+	}
+
+	if (debug_data == nullptr)
+		return false;
+
+	pdb_reader pdb(debug_data->path);
+
+	// Check if the debug information actually matches the executable
+	if (pdb.guid() != debug_data->guid)
+		return false;
+
+	print("  Found program debug database: " + std::string(debug_data->path));
+
+	// The linker working directory should equal the project root directory
+	std::string linker_cmd;
+	pdb.read_link_info(_source_dir, linker_cmd);
+
+	pdb.read_symbol_table(_image_base, _symbols);
+	pdb.read_object_files(_object_files);
+	pdb.read_source_files(_source_files);
+
+	return true;
+}
+void blink::application::read_import_address_table(const BYTE *image_base)
+{
+	const auto headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(
+		_image_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(_image_base)->e_lfanew);
+
+	// Search import directory for additional symbols
+	const IMAGE_DATA_DIRECTORY &import_directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	const auto import_directory_entries = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR *>(_image_base + import_directory.VirtualAddress);
+
+	for (unsigned int i = 0; import_directory_entries[i].FirstThunk != 0; i++)
+	{
+		const auto name = reinterpret_cast<const char *>(_image_base + import_directory_entries[i].Name);
+		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].Characteristics);
+		const auto import_address_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].FirstThunk);
+
+		for (unsigned int k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
+		{
+			const char *import_name = nullptr;
+
+			// We need to figure out the name of symbols imported by ordinal by going through the export table of the target module
+			if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
+			{
+				// The module should have already been loaded by Windows when the application was launched, so just get its handle here
+				const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
+				if (target_base == nullptr)
+					continue; // Bail out if that is not the case to be safe
+
+				const auto target_headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(target_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(target_base)->e_lfanew);
+				const auto export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(target_base + target_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
+				const auto export_name_strings = reinterpret_cast<const DWORD *>(target_base + export_directory->AddressOfNames);
+				const auto export_name_ordinals = reinterpret_cast<const WORD *>(target_base + export_directory->AddressOfNameOrdinals);
+
+				const auto ordinal = std::find(export_name_ordinals, export_name_ordinals + export_directory->NumberOfNames, IMAGE_ORDINAL(import_name_table[k].u1.Ordinal));
+				if (ordinal != export_name_ordinals + export_directory->NumberOfNames)
+					import_name = reinterpret_cast<const char *>(target_base + export_name_strings[std::distance(export_name_ordinals, ordinal)]);
+				else
+					continue; // Ignore ordinal imports for which the name could not be resolved
+			}
+			else
+			{
+				import_name = reinterpret_cast<const IMAGE_IMPORT_BY_NAME *>(_image_base + import_name_table[k].u1.AddressOfData)->Name;
+			}
+
+			_symbols.insert({ import_name, reinterpret_cast<void *>(import_address_table[k].u1.AddressOfData) });
+		}
+
+		read_debug_info(reinterpret_cast<const BYTE *>(GetModuleHandleA(name)));
 	}
 }
 

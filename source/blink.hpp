@@ -26,12 +26,7 @@ namespace blink
 		application();
 
 		void run();
-
 		bool link(const std::filesystem::path &object_file);
-		template <typename SYMBOL_TYPE, typename HEADER_TYPE>
-		bool link(void *const object_file, const HEADER_TYPE &header);
-
-		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const;
 
 		template <typename T>
 		T read_symbol(const std::string &name) const
@@ -49,6 +44,14 @@ namespace blink
 		}
 
 	private:
+		template <typename SYMBOL_TYPE, typename HEADER_TYPE>
+		bool link(void *const object_file, const HEADER_TYPE &header);
+
+		bool read_debug_info(const uint8_t *image_base);
+		void read_import_address_table(const uint8_t *image_base);
+
+		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const;
+
 		uint8_t *_image_base = nullptr;
 		std::filesystem::path _source_dir;
 		std::vector<std::filesystem::path> _object_files;

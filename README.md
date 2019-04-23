@@ -34,9 +34,9 @@ Once you build blink, there are two ways to use it:
 2) Or attach blink to an already running application:\
 	```blink.exe PID``` where PID is the process ID to attach to
 
-Now simply do changes to any of the source code files of your application and see how they are reflected right away. Keep in mind that since blink patches on a function-level, you need a function that is repeatedly called, since changes are only made visible the next time a function is entered.
+Now simply do changes to any of the source code files of your application and see how they are reflected right away. Keep in mind that since blink patches on a function-level, you need a function that is repeatedly called, since **changes are only made visible the next time a function is entered**.
 
-If blink has trouble finding the right compilation command-line for your project, make sure to check your build is generating PDB files with the `/ZI` compile option (blink has to fall back to a default command-line otherwise).
+If blink has trouble finding the right compilation command-line for your project or you get a `cl.exe not found` error, make sure to check your build is generating PDB files with the `/ZI` compile option!
 
 Optionally, if you define the following functions in your application, blink will call them before and after linking, which can be used to synchronize or save/restore application state:
 ```c++

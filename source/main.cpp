@@ -8,6 +8,7 @@
 #include <iostream>
 #include <Windows.h>
 #include <Psapi.h>
+#include <TlHelp32.h> // GetProcessByName
 
 #pragma region CRT sections
 // This exists to imitate the behavior of the CRT initialization code
@@ -30,6 +31,37 @@ void print(const char *message, size_t length)
 {
 	DWORD size = static_cast<DWORD>(length);
 	WriteFile(console, message, size, &size, nullptr);
+}
+
+DWORD GetProcessByName(PCSTR name)
+{
+	DWORD pid = 0;
+
+	WCHAR exe[MAX_PATH] = {};
+	mbstowcs_s(NULL, exe, name, MAX_PATH);
+
+	// Create toolhelp snapshot.
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	PROCESSENTRY32 process;
+	ZeroMemory(&process, sizeof(process));
+	process.dwSize = sizeof(process);
+
+	// Walkthrough all processes.
+	if (Process32First(snapshot, &process))
+	{
+		do
+		{
+			if (wcscmp(process.szExeFile, exe) == 0)
+			{
+				pid = process.th32ProcessID;
+				break;
+			}
+		} while (Process32Next(snapshot, &process));
+	}
+
+	CloseHandle(snapshot);
+
+	return pid;
 }
 
 DWORD CALLBACK remote_main(BYTE *image_base)
@@ -135,16 +167,24 @@ int main(int argc, char *argv[])
 			for (int i = 1; i < argc; ++i, command_line += ' ')
 				command_line += argv[i];
 
-			if (!CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			if (CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
-				std::cout << "Failed to start target application process!" << std::endl;
-				return GetLastError();
+				pid = process_info.dwProcessId;
+
+				CloseHandle(process_info.hThread);
+				CloseHandle(process_info.hProcess);
 			}
+			else
+			{
+				// If process could not be started, try to look up PID of running process by name
+				pid = GetProcessByName(argv[1]);
 
-			pid = process_info.dwProcessId;
-
-			CloseHandle(process_info.hThread);
-			CloseHandle(process_info.hProcess);
+				if (pid == 0)
+				{
+					std::cout << "Failed to start target application process!" << std::endl;
+					return GetLastError();
+				}
+			}
 		}
 	}
 

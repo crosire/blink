@@ -156,34 +156,45 @@ int main(int argc, char *argv[])
 
 	if (argc > 1)
 	{
-		pid = strtoul(argv[1], nullptr, 0);
-
-		if (pid == 0)
+		if (argc > 2)
 		{
-			STARTUPINFOA startup_info = { sizeof(startup_info) };
-			PROCESS_INFORMATION process_info = {};
-
-			std::string command_line;
-			for (int i = 1; i < argc; ++i, command_line += ' ')
-				command_line += argv[i];
-
-			if (CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
+			if (strcmp(argv[1],"-a") == 0) // Attach to running process
 			{
-				pid = process_info.dwProcessId;
-
-				CloseHandle(process_info.hThread);
-				CloseHandle(process_info.hProcess);
-			}
-			else
-			{
-				// If process could not be started, try to look up PID of running process by name
-				pid = GetProcessByName(argv[1]);
+				// Is numerical PID
+				pid = strtoul(argv[2], nullptr, 0);
 
 				if (pid == 0)
+				{
+					// Try to look up PID of running process by name
+					pid = GetProcessByName(argv[2]);
+				}
+			}
+		}
+		else
+		{
+			// Attach to running process by PID
+			pid = strtoul(argv[1], nullptr, 0);
+
+			// Launch target application and determine PID
+			if (pid == 0)
+			{
+				STARTUPINFOA startup_info = { sizeof(startup_info) };
+				PROCESS_INFORMATION process_info = {};
+
+				std::string command_line;
+				for (int i = 1; i < argc; ++i, command_line += ' ')
+					command_line += argv[i];
+
+				if (!CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 				{
 					std::cout << "Failed to start target application process!" << std::endl;
 					return GetLastError();
 				}
+
+				pid = process_info.dwProcessId;
+
+				CloseHandle(process_info.hThread);
+				CloseHandle(process_info.hProcess);			
 			}
 		}
 	}

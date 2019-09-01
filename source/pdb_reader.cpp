@@ -226,12 +226,47 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 	// Read module information stream (https://llvm.org/docs/PDB/DbiStream.html#dbi-mod-info-substream)
 	while (stream.tell() < sizeof(pdb_dbi_header) + header.module_info_size)
 	{
-		stream.skip(sizeof(pdb_dbi_module_info));
+		const pdb_dbi_module_info &info = stream.read<pdb_dbi_module_info>();
 
 		const auto module_name = stream.read_string();
 		const auto obj_file_name = stream.read_string(); // Contains the name of the ".lib" if this object file is part of a library
 
-		object_files.push_back(module_name);
+		std::filesystem::path path(module_name);
+
+		// Find absolute path to if necessary
+		if (path.is_relative())
+		{
+			if (info.symbol_stream != 65535 /*-1*/)
+			{
+				std::filesystem::path cwd;
+
+				// Look up current working directory in symbol stream https://llvm.org/docs/PDB/ModiStream.html
+				stream_reader stream(msf_reader::stream(info.symbol_stream));
+				stream.skip(4); // Skip 32-bit signature
+				
+				parse_code_view_records(stream, [&](uint16_t tag) {
+					if (tag == 0x113d) // S_ENVBLOCK
+					{
+						stream.skip(1);
+						while (stream.tell() < stream.size() && *stream.data() != '\0')
+						{
+							const auto key = stream.read_string();
+							const std::string value(stream.read_string());
+
+							if (key == "cwd")
+							{
+								cwd = value;
+								return;
+							}
+						}
+					}
+				});
+			
+				path = cwd / path;
+			}
+		}
+
+		object_files.push_back( path.string() );
 
 		stream.align(4);
 	}
@@ -263,14 +298,19 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 	stream.skip(num_modules * sizeof(uint16_t) * 2 + num_source_files * sizeof(uint32_t));
 	const auto offset = stream.tell();
 
-	source_files.resize(num_modules);
+	// Append source files to array
+	size_t n = source_files.size();
+	source_files.resize(n + num_modules);
 
 	for (uint32_t k = 0; k < num_modules; ++k)
 	{
-		for (uint32_t i = 0; i < module_num_source_files[k]; ++i)
+		uint16_t num_files = module_num_source_files[k];
+		source_files[n + k].resize(num_files);
+
+		for (uint32_t i = 0; i < num_files; ++i)
 		{
 			stream.seek(offset + file_name_offsets[module_file_offsets[k] + i]);
-			source_files[k].push_back(stream.read_string());
+			source_files[n + k][i] = stream.read_string();
 		}
 	}
 }

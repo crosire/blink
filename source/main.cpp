@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
 	{
 		if (argc > 2)
 		{
-			if (strcmp(argv[1],"-a") == 0) // Attach to running process
+			if (strcmp(argv[1], "-a") == 0) // Attach to running process
 			{
 				// Is numerical PID
 				pid = strtoul(argv[2], nullptr, 0);

@@ -33,35 +33,24 @@ void print(const char *message, size_t length)
 	WriteFile(console, message, size, &size, nullptr);
 }
 
-DWORD GetProcessByName(PCSTR name)
+static DWORD GetProcessByName(PCSTR name)
 {
-	DWORD pid = 0;
+	WCHAR wide_name[MAX_PATH] = {};
+	mbstowcs_s(NULL, wide_name, name, MAX_PATH);
 
-	WCHAR exe[MAX_PATH] = {};
-	mbstowcs_s(NULL, exe, name, MAX_PATH);
+	const scoped_handle snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 
-	// Create toolhelp snapshot.
-	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	PROCESSENTRY32 process;
-	ZeroMemory(&process, sizeof(process));
-	process.dwSize = sizeof(process);
-
-	// Walkthrough all processes.
-	if (Process32First(snapshot, &process))
+	// Walk through all processes and search for the name
+	PROCESSENTRY32W process = { sizeof(process) };
+	for (BOOL next = Process32FirstW(snapshot, &process); next; next = Process32NextW(snapshot, &process))
 	{
-		do
+		if (wcscmp(process.szExeFile, wide_name) == 0)
 		{
-			if (wcscmp(process.szExeFile, exe) == 0)
-			{
-				pid = process.th32ProcessID;
-				break;
-			}
-		} while (Process32Next(snapshot, &process));
+			return process.th32ProcessID;
+		}
 	}
 
-	CloseHandle(snapshot);
-
-	return pid;
+	return 0;
 }
 
 DWORD CALLBACK remote_main(BYTE *image_base)

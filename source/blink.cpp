@@ -273,6 +273,11 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 		const auto import_name_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].Characteristics);
 		const auto import_address_table = reinterpret_cast<const IMAGE_THUNK_DATA *>(_image_base + import_directory_entries[i].FirstThunk);
 
+		// The module should have already been loaded by Windows when the application was launched, so just get its handle here
+		const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
+		if (target_base == nullptr)
+			continue; // Bail out if that is not the case to be safe
+
 		for (unsigned int k = 0; import_name_table[k].u1.AddressOfData != 0; k++)
 		{
 			const char *import_name = nullptr;
@@ -280,11 +285,6 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 			// We need to figure out the name of symbols imported by ordinal by going through the export table of the target module
 			if (IMAGE_SNAP_BY_ORDINAL(import_name_table[k].u1.Ordinal))
 			{
-				// The module should have already been loaded by Windows when the application was launched, so just get its handle here
-				const auto target_base = reinterpret_cast<const BYTE *>(GetModuleHandleA(name));
-				if (target_base == nullptr)
-					continue; // Bail out if that is not the case to be safe
-
 				const auto target_headers = reinterpret_cast<const IMAGE_NT_HEADERS *>(target_base + reinterpret_cast<const IMAGE_DOS_HEADER *>(target_base)->e_lfanew);
 				const auto export_directory = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY *>(target_base + target_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
 				const auto export_name_strings = reinterpret_cast<const DWORD *>(target_base + export_directory->AddressOfNames);
@@ -304,7 +304,7 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 			_symbols.insert({ import_name, reinterpret_cast<void *>(import_address_table[k].u1.AddressOfData) });
 		}
 
-		read_debug_info(reinterpret_cast<const BYTE *>(GetModuleHandleA(name)));
+		read_debug_info(target_base);
 	}
 }
 

@@ -340,30 +340,42 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 				SetFilePointer(file, section->PointerToRawData, nullptr, FILE_BEGIN);
 				ReadFile(file, debug_data.data(), section->SizeOfRawData, &read, nullptr);
 
-				// Replace command-line with the one in the debug section
-				cmdline.clear();
-
 				// Skip header in front of CodeView records (version, ...)
 				stream_reader stream(std::move(debug_data));
-				stream.skip(4 * 3);
+				stream.skip(4); // Skip 32-bit signature (this should be CV_SIGNATURE_C13, aka 4)
 
-				parse_code_view_records(stream, [&](uint16_t tag) {
-					if (tag != 0x113d) // S_ENVBLOCK
-						return; // Skip all records that are not about the compiler environment
-					stream.skip(1);
-					while (stream.tell() < stream.size() && *stream.data() != '\0')
+				while (stream.tell() < stream.size() && cmdline.empty())
+				{
+					// CV_DebugSSubsectionHeader_t
+					const auto subsection_type = stream.read<uint32_t>();
+					const auto subsection_length = stream.read<uint32_t>();
+					if (subsection_type != 0xf1 /*DEBUG_S_SYMBOLS*/)
 					{
-						const auto key = stream.read_string();
-						const std::string value(stream.read_string());
-
-						if (key == "cwd")
-							cmdline += "cd /D \"" + value + "\"\n";
-						else if (key == "cl") // Add compiler directories to path, so that 'mspdbcore.dll' is found
-							cmdline += "set PATH=%PATH%;" + value + "\\..\\..\\x86;" + value + "\\..\\..\\x64\n\"" + value + "\" ";
-						else if (key == "cmd")
-							cmdline += value;
+						stream.skip(subsection_length);
+						stream.align(4);
+						continue;
 					}
-				});
+
+					parse_code_view_records(stream, subsection_length, [&](uint16_t tag) {
+						if (tag != 0x113d) // S_ENVBLOCK
+							return; // Skip all records that are not about the compiler environment
+						stream.skip(1);
+						while (stream.tell() < stream.size() && *stream.data() != '\0')
+						{
+							const auto key = stream.read_string();
+							const std::string value(stream.read_string());
+
+							if (key == "cwd")
+								cmdline += "cd /D \"" + value + "\"\n";
+							else if (key == "cl") // Add compiler directories to path, so that 'mspdbcore.dll' is found
+								cmdline += "set PATH=%PATH%;" + value + "\\..\\..\\x86;" + value + "\\..\\..\\x64\n\"" + value + "\" ";
+							else if (key == "cmd")
+								cmdline += value;
+						}
+					});
+
+					stream.align(4); // Subsection headers are 4-byte aligned
+				}
 			}
 		}
 	}

@@ -197,7 +197,7 @@ void blink::pdb_reader::read_symbol_table(uint8_t *image_base, std::unordered_ma
 	// Read symbol table records in CodeView format
 	stream = msf_reader::stream(header.symbol_record_stream);
 
-	parse_code_view_records(stream, [&](uint16_t tag) {
+	parse_code_view_records(stream, stream.size(), [&](uint16_t tag) {
 		if (tag != 0x110E) // S_PUB32
 			return; // Skip all records that are not about public symbols
 
@@ -242,9 +242,9 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 
 				// Look up current working directory in symbol stream https://llvm.org/docs/PDB/ModiStream.html
 				stream_reader stream(msf_reader::stream(info.symbol_stream));
-				stream.skip(4); // Skip 32-bit signature
-				
-				parse_code_view_records(stream, [&](uint16_t tag) {
+				stream.skip(4); // Skip 32-bit signature (this should be CV_SIGNATURE_C13, aka 4)
+
+				parse_code_view_records(stream, info.symbol_byte_size - 4, [&](uint16_t tag) {
 					if (tag == 0x113d) // S_ENVBLOCK
 					{
 						stream.skip(1);

@@ -184,10 +184,12 @@ namespace blink
 	/// Helper function that parses a CodeView stream and calls a callback function for every record in it
 	/// </summary>
 	template <typename L>
-	void parse_code_view_records(stream_reader &stream, L callback, size_t alignment = 1)
+	void parse_code_view_records(stream_reader &stream, size_t length, L callback, size_t alignment = 1)
 	{
+		const size_t end = stream.tell() + length;
+
 		// A list of records in CodeView format
-		while (stream.tell() < stream.size())
+		while (stream.tell() < end)
 		{
 			// Each records starts with 2 bytes containing the size of the record after this element
 			const auto size = stream.read<uint16_t>();

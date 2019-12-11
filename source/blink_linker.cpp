@@ -211,6 +211,7 @@ bool blink::application::link(HANDLE file, const HEADER_TYPE &header)
 		// Skip over all sections that do not need linking
 		if (section.Characteristics & (IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE))
 		{
+			section.PointerToRawData = 0xFFFFFFFF; // Mark this section as being unused
 			section.NumberOfRelocations = 0; // Ensure that these are not handled by relocation below
 			continue;
 		}
@@ -346,20 +347,24 @@ bool blink::application::link(HANDLE file, const HEADER_TYPE &header)
 		else if (symbol.SectionNumber > IMAGE_SYM_UNDEFINED)
 		{
 			const IMAGE_SECTION_HEADER &section = sections[symbol.SectionNumber - 1];
-			target_address = module_base + section.PointerToRawData + symbol.Value;
 
-			if (symbol_table_lookup != _symbols.end() && symbol_name != reinterpret_cast<const char(&)[]>(section.Name))
+			if (section.PointerToRawData != 0xFFFFFFFF) // Skip sections that do not need linking (see section initialization above)
 			{
-				const auto old_address = static_cast<BYTE *>(symbol_table_lookup->second);
+				target_address = module_base + section.PointerToRawData + symbol.Value;
 
-				if (ISFCN(symbol.Type))
+				if (symbol_table_lookup != _symbols.end() && symbol_name != reinterpret_cast<const char(&)[]>(section.Name))
 				{
-					image_function_relocations.push_back({ old_address, target_address });
-				}
-				else if (strcmp(reinterpret_cast<const char *>(section.Name), ".bss") == 0 || strcmp(reinterpret_cast<const char *>(section.Name), ".data") == 0)
-				{
-					// Continue to use existing data from previous uninitialized (.bss) and initialized (.data) sections instead of replacing it
-					target_address = old_address;
+					const auto old_address = static_cast<BYTE *>(symbol_table_lookup->second);
+
+					if (ISFCN(symbol.Type))
+					{
+						image_function_relocations.push_back({ old_address, target_address });
+					}
+					else if (strcmp(reinterpret_cast<const char *>(section.Name), ".bss") == 0 || strcmp(reinterpret_cast<const char *>(section.Name), ".data") == 0)
+					{
+						// Continue to use existing data from previous uninitialized (.bss) and initialized (.data) sections instead of replacing it
+						target_address = old_address;
+					}
 				}
 			}
 		}

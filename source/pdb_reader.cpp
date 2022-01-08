@@ -286,7 +286,8 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 	const uint16_t num_modules = stream.read<uint16_t>();
 	stream.skip(2); // Skip old number of file names (see comment on counting the number below)
 
-	const uint16_t *const module_file_offsets = stream.data<uint16_t>();
+	// ignoring ModIndices since not useful
+
 	const uint16_t *const module_num_source_files = stream.data<uint16_t>(num_modules * sizeof(uint16_t));
 	const uint32_t *const file_name_offsets = stream.data<uint32_t>(num_modules * sizeof(uint16_t) * 2);
 
@@ -302,6 +303,7 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 	size_t n = source_files.size();
 	source_files.resize(n + num_modules);
 
+	uint32_t file_name_offset_index = 0;
 	for (uint32_t k = 0; k < num_modules; ++k)
 	{
 		uint16_t num_files = module_num_source_files[k];
@@ -309,8 +311,9 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 
 		for (uint32_t i = 0; i < num_files; ++i)
 		{
-			stream.seek(offset + file_name_offsets[module_file_offsets[k] + i]);
+			stream.seek(offset + file_name_offsets[file_name_offset_index]);
 			source_files[n + k][i] = stream.read_string();
+			file_name_offset_index += 1;
 		}
 	}
 }

@@ -53,7 +53,7 @@ namespace blink
 		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const;
 
 		uint8_t *_image_base = nullptr;
-		std::filesystem::path _source_dir;
+		std::vector<std::filesystem::path> _source_dirs;
 		std::vector<std::filesystem::path> _object_files;
 		std::vector<std::vector<std::filesystem::path>> _source_files;
 		std::unordered_map<std::string, void *> _symbols;

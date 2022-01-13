@@ -12,23 +12,52 @@
 #include <unordered_map>
 #include <Windows.h>
 
-static std::filesystem::path common_path(const std::vector<std::filesystem::path> &paths)
+static void add_unique_path(std::vector<std::filesystem::path>& paths, const std::filesystem::path &path)
+{
+	if (path.empty())
+		return;
+
+	if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+		paths.push_back(path);
+	}
+}
+
+static void common_paths(const std::vector<std::filesystem::path> &paths, std::vector<std::filesystem::path> &source_dirs)
 {
 	if (paths.empty())
-		return std::filesystem::path();
+		return;
 
-	std::filesystem::path all_common_path = paths[0].parent_path();
+	add_unique_path(source_dirs, paths[0].parent_path());
 
-	for (auto it = paths.begin() + 1; it != paths.end(); ++it) {
-		std::filesystem::path common_path;
-		std::filesystem::path file_directory = it->parent_path();
-		for (auto it2 = file_directory.begin(), it3 = all_common_path.begin(); it2 != file_directory.end() && it3 != all_common_path.end() && *it2 == *it3; ++it2, ++it3) {
-			common_path /= *it2;
+	for (auto pathIt = paths.begin() + 1; pathIt != paths.end(); ++pathIt) {
+		// only consider paths that exist, ie: can be watched
+		if (!std::filesystem::exists(*pathIt)) {
+			continue;
 		}
-		all_common_path = common_path;
-	}
+		std::filesystem::path file_directory = pathIt->parent_path();
+		std::vector<std::filesystem::path>::iterator found_path_iter = source_dirs.end();
+		for (std::vector<std::filesystem::path>::iterator dirIt = source_dirs.begin(); dirIt != source_dirs.end(); ++dirIt) {
+			auto source_dir = *dirIt;
+			std::filesystem::path common_path;
+			for (auto it2 = file_directory.begin(), it3 = source_dir.begin(); it2 != file_directory.end() && it3 != source_dir.end() && *it2 == *it3; ++it2, ++it3) {
+				common_path /= *it2;
+			}
+			if (common_path.u8string().length() < 8) {
+				bool test = true;
+			}
 
-	return all_common_path;
+			if (!common_path.empty()) {
+				found_path_iter = dirIt;
+				*dirIt = common_path;
+			}
+		}
+		if (found_path_iter == source_dirs.end()) {
+			// add the drive letter
+			if (file_directory.begin() != file_directory.end()) {
+				add_unique_path(source_dirs, file_directory);
+			}
+		}
+	}
 }
 
 blink::application::application()
@@ -73,13 +102,13 @@ void blink::application::run()
 			}
 		}
 
-		// The linker is invoked in solution directory, which may be out of source directory. Use source common path instead.
-		_source_dir = common_path(cpp_files);
+		// The linker is invoked in solution directory, which may be out of source directory. Use source common paths instead.
+		common_paths(cpp_files, _source_dirs);
 	}
 
-	if (_source_dir.empty())
+	if (_source_dirs.empty())
 	{
-		print("  Error: Could not determine project directory. Make sure all source code files are on the same drive.");
+		print("  Error: Could not determine source directories. Check your .pdb file for source files.");
 		return;
 	}
 
@@ -106,7 +135,7 @@ void blink::application::run()
 			print("  Error: Could not create output communication pipe.");
 
 			CloseHandle(si.hStdInput);
-			return;
+return;
 		}
 
 		SetHandleInformation(compiler_stdout, HANDLE_FLAG_INHERIT, FALSE);
@@ -133,77 +162,167 @@ void blink::application::run()
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
 	}
 
-	print("Starting file system watcher for '" + _source_dir.string() + "' ...");
+	std::vector<scoped_handle> watcher_handles;
 
-	// Open handle to the common source code directory
-	const scoped_handle watcher_handle = CreateFileW(_source_dir.native().c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
+		auto source_dir = *it;
 
-	if (watcher_handle == INVALID_HANDLE_VALUE)
-	{
-		print("  Error: Could not open directory handle.");
-		return;
+		print("Starting file system watcher for '" + source_dir.string() + "' ...");
+
+		// Open handle to the common source code directory
+		watcher_handles.push_back(CreateFileW(source_dir.native().c_str(),
+			GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
+
+		if (watcher_handles.empty() || watcher_handles.back() == INVALID_HANDLE_VALUE)
+		{
+			print("  Error: Could not open directory handle.");
+			return;
+		}
 	}
 
-	DWORD size = 0; BYTE watcher_buffer[4096];
+	DWORD size = 0;
 
-	// Check for modifications to any of the source code files
-	while (ReadDirectoryChangesW(watcher_handle, watcher_buffer, sizeof(watcher_buffer), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, nullptr, nullptr))
-	{
-		bool first_notification = true;
+	struct notification_info {
+		FILE_NOTIFY_INFORMATION* pInfo;
+		OVERLAPPED overlapped;
+	};
+	std::vector<notification_info> notification_infos;
+	std::vector<HANDLE> wait_handles;
+	const DWORD bufferSize = 4096;
+	size_t i = 0;
+	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
+		notification_info info;
+		info.pInfo = (FILE_NOTIFY_INFORMATION*)malloc(bufferSize);
 
-		// Iterate over all notification items
-		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(watcher_buffer); first_notification || info->NextEntryOffset != 0;
-			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
+		if (NULL == info.pInfo)
 		{
-			std::filesystem::path object_file, source_file =
-				_source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
+			print("  Error: Could malloc pInfo.");
+			break;  // so we can cleanup below
+		}
 
-			// Ignore changes to files that are not C++ source files
-			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
-				continue;
+		info.overlapped = { 0 };
+		::ZeroMemory(&info.overlapped, sizeof(OVERLAPPED));
 
-			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
-			if (const auto current_time = GetTickCount(); _last_modifications[source_file.string()] + 3000 > current_time)
-				continue;
-			else
-				_last_modifications[source_file.string()] = current_time;
+		info.overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
-			print("Detected modification to: " + source_file.string());
+		if (NULL == info.overlapped.hEvent)
+		{
+			print("  Error: CreateEvent failed.");
+			break;  // so we can cleanup below
+		}
 
-			// Build compiler command line
-			std::string cmdline = build_compile_command_line(source_file, object_file);
+		// Check for modifications to any of the source code files
+		if (0 == ReadDirectoryChangesW(watcher_handles[i], info.pInfo, bufferSize, TRUE,
+			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &info.overlapped, nullptr)) {
+			print("  Error: ReadDirectoryChangesW failed.");
+			break;  // so we can cleanup below
+		}
+		notification_infos.push_back(info);
+		wait_handles.push_back(info.overlapped.hEvent);
+		++i;
+	}
 
-			// Append special completion message
-			cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
+	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
+		const DWORD wait_result = WaitForMultipleObjects(wait_handles.size(), &wait_handles[0], FALSE, INFINITE);
 
-			// Execute compiler command line
-			WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
+		if (wait_result != WAIT_OBJECT_0)
+		{
+			print("  Error: Unexpected result from WaitForMultipleObjects");
+			break;  // so we can cleanup below
+		}
 
-			// Read and react to compiler output messages
-			while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
+		i = 0;
+		std::vector<size_t> indices_to_handle;
+		for (auto it = notification_infos.begin(); it != notification_infos.end(); ++it) {
+			if (HasOverlappedIoCompleted(&it->overlapped)) {
+				indices_to_handle.push_back(i);
+			}
+			++i;
+		}
+
+		for (auto it = indices_to_handle.begin(); it != indices_to_handle.end(); ++it) {
+			i = *it;
+			DWORD dwBytesTransferred = 0;
+
+			if (0 == GetOverlappedResult(watcher_handles[i], &notification_infos[i].overlapped,
+				&dwBytesTransferred, TRUE))
 			{
-				std::string message(size, '\0');
-				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
-
-				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
-					print(message.data() + offset, next - offset + 1);
-
-				// Listen for special completion message
-				if (const size_t offset = message.find(" with code "); offset != std::string::npos)
-				{
-					// Only load the compiled module if compilation was successful
-					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
-					{
-						call_symbol("__blink_sync", source_file.string().c_str()); // Notify application that we want to link an object file
-						const bool link_success = link(object_file);
-						call_symbol("__blink_release", source_file.string().c_str(), link_success); // Notify application that we have finished work
-					}
-					break;
-				}
+				print("  Error: GetOverlappedResult failed.");
+				break;  // so we can cleanup below
 			}
 
-			// The OBJ file is not needed anymore.
-			DeleteFileW(object_file.c_str());
+			bool first_notification = true;
+
+			// Iterate over all notification items
+			for (auto info = notification_infos[i].pInfo; first_notification || info->NextEntryOffset != 0;
+				first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
+			{
+				std::filesystem::path object_file, source_file =
+					_source_dirs[i] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
+
+				// Ignore changes to files that are not C++ source files
+				if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
+					continue;
+
+				// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
+				if (const auto current_time = GetTickCount(); _last_modifications[source_file.string()] + 3000 > current_time)
+					continue;
+				else
+					_last_modifications[source_file.string()] = current_time;
+
+				print("Detected modification to: " + source_file.string());
+
+				// Build compiler command line
+				std::string cmdline = build_compile_command_line(source_file, object_file);
+
+				// Append special completion message
+				cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
+
+				// Execute compiler command line
+				WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
+
+				// Read and react to compiler output messages
+				while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
+				{
+					std::string message(size, '\0');
+					ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
+
+					for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
+						print(message.data() + offset, next - offset + 1);
+
+					// Listen for special completion message
+					if (const size_t offset = message.find(" with code "); offset != std::string::npos)
+					{
+						// Only load the compiled module if compilation was successful
+						if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
+						{
+							call_symbol("__blink_sync", source_file.string().c_str()); // Notify application that we want to link an object file
+							const bool link_success = link(object_file);
+							call_symbol("__blink_release", source_file.string().c_str(), link_success); // Notify application that we have finished work
+						}
+						break;
+					}
+				}
+
+				// The OBJ file is not needed anymore.
+				DeleteFileW(object_file.c_str());
+			}
+		}
+	}
+
+	// cleanup
+	for (auto it = notification_infos.begin(); it != notification_infos.end(); ++it) {
+		if (NULL != it->pInfo)
+		{
+			free(it->pInfo);
+			it->pInfo = NULL;
+		}
+
+		if (NULL != it->overlapped.hEvent)
+		{
+			::CloseHandle(it->overlapped.hEvent);
+			it->overlapped.hEvent = NULL;
 		}
 	}
 }
@@ -250,7 +369,11 @@ bool blink::application::read_debug_info(const BYTE *image_base)
 
 	// The linker working directory should equal the project root directory
 	std::string linker_cmd;
-	pdb.read_link_info(_source_dir, linker_cmd);
+	std::filesystem::path source_dir;
+	pdb.read_link_info(source_dir, linker_cmd);
+	if (!source_dir.empty()) {
+		add_unique_path(_source_dirs, source_dir);
+	}
 
 	pdb.read_symbol_table(_image_base, _symbols);
 	pdb.read_object_files(_object_files);

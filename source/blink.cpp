@@ -6,11 +6,9 @@
 #include "blink.hpp"
 #include "pdb_reader.hpp"
 #include "coff_reader.hpp"
-#include "scoped_handle.hpp"
 #include <string>
 #include <algorithm>
 #include <unordered_map>
-#include <Windows.h>
 
 static void add_unique_path(std::vector<std::filesystem::path>& paths, const std::filesystem::path &path)
 {
@@ -155,69 +153,29 @@ void blink::application::run()
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
 	}
 
+	size_t dir_index = 0;
 	std::vector<scoped_handle> dir_handles;
+	std::vector<scoped_handle> event_handles;
+	std::vector<notification_info> notification_infos;
 	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
 		auto source_dir = *it;
-
 		print("Starting file system watcher for '" + source_dir.string() + "' ...");
 
-		// Open handle to the common source code directory
-		dir_handles.push_back(CreateFileW(source_dir.native().c_str(),
-			GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-			nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
-
-		if (dir_handles.empty() || dir_handles.back() == INVALID_HANDLE_VALUE)
-		{
-			print("  Error: Could not open directory handle.");
-			return;
-		}
-	}
-
-	struct free_delete
-	{
-		void operator()(void* x) { free(x); }
-	};
-	struct notification_info {
-		std::shared_ptr<FILE_NOTIFY_INFORMATION> p_info;
-		OVERLAPPED overlapped;
-	};
-	std::vector<notification_info> notification_infos;
-	std::vector<scoped_handle> event_handles;
-	DWORD size = 0;
-	const DWORD buffer_size = 4096;
-	size_t dir_index = 0;
-	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
+		dir_handles.push_back(INVALID_HANDLE_VALUE);
+		event_handles.push_back(INVALID_HANDLE_VALUE);
 		notification_info info;
-		info.p_info = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(buffer_size), free_delete());
-
-		if (NULL == info.p_info)
-		{
-			print("  Error: Could malloc p_info.");
-			return;
-		}
-
-		info.overlapped = { 0 };
-		ZeroMemory(&info.overlapped, sizeof(OVERLAPPED));
-
-		info.overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-		if (NULL == info.overlapped.hEvent)
-		{
-			print("  Error: CreateEvent failed.");
-			return;
-		}
-
-		// Check for modifications to any of the source code files
-		if (0 == ReadDirectoryChangesW(dir_handles[dir_index], info.p_info.get(), buffer_size, TRUE,
-			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &info.overlapped, nullptr)) {
-			print("  Error: ReadDirectoryChangesW failed.");
-			return;
-		}
 		notification_infos.push_back(info);
-		event_handles.push_back(info.overlapped.hEvent);
+
+		set_watch(
+			dir_index,
+			dir_handles,
+			event_handles,
+			notification_infos);
+
 		++dir_index;
 	}
 
+	DWORD size = 0;
 	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
 		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(), &event_handles[0], FALSE, INFINITE);
 		if (wait_result == WAIT_FAILED) {
@@ -229,12 +187,6 @@ void blink::application::run()
 		const BOOL overlapped_success = GetOverlappedResult(dir_handles[dir_index], &notification_infos[dir_index].overlapped,
 			&bytes_transferred, TRUE);
 
-		ResetEvent(event_handles[dir_index]);
-		if (0 == ReadDirectoryChangesW(dir_handles[dir_index], notification_infos[dir_index].p_info.get(), buffer_size, TRUE,
-			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
-			print("  Error: ReadDirectoryChangesW failed.");
-			return;
-		}
 		if (!overlapped_success) {
 			print("  Error: GetOverlappedResult failed.");
 			return;
@@ -295,6 +247,11 @@ void blink::application::run()
 			// The OBJ file is not needed anymore.
 			DeleteFileW(object_file.c_str());
 		}
+		set_watch(
+			dir_index,
+			dir_handles,
+			event_handles,
+			notification_infos);
 	}
 }
 
@@ -399,6 +356,46 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 		}
 
 		read_debug_info(target_base);
+	}
+}
+
+void blink::application::set_watch(
+	const size_t dir_index,
+	std::vector<scoped_handle> &dir_handles,
+	std::vector<scoped_handle>& event_handles,
+	std::vector<notification_info> &notification_infos)
+{
+	dir_handles[dir_index].reset(CreateFileW(_source_dirs[dir_index].native().c_str(),
+		GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
+	if (dir_handles[dir_index] == INVALID_HANDLE_VALUE)
+	{
+		print("  Error: Could not open directory handle.");
+		return;
+	}
+	const size_t buffer_size = 4096;
+	notification_infos[dir_index].p_info = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(buffer_size), free_delete());
+	if (NULL == notification_infos[dir_index].p_info)
+	{
+		print("  Error: Could malloc p_info.");
+		return;
+	}
+	notification_infos[dir_index].overlapped = { 0 };
+	ZeroMemory(&(notification_infos[dir_index].overlapped), sizeof(OVERLAPPED));
+
+	notification_infos[dir_index].overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	event_handles[dir_index].reset(notification_infos[dir_index].overlapped.hEvent);
+	if (NULL == event_handles[dir_index])
+	{
+		print("  Error: CreateEvent failed.");
+		return;
+	}
+
+	DWORD size = 0;
+	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], notification_infos[dir_index].p_info.get(), buffer_size, TRUE,
+		FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
+		print("  Error: ReadDirectoryChangesW failed.");
+		return;
 	}
 }
 

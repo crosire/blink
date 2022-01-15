@@ -135,7 +135,7 @@ void blink::application::run()
 			print("  Error: Could not create output communication pipe.");
 
 			CloseHandle(si.hStdInput);
-return;
+			return;
 		}
 
 		SetHandleInformation(compiler_stdout, HANDLE_FLAG_INHERIT, FALSE);
@@ -183,40 +183,44 @@ return;
 
 	DWORD size = 0;
 
+	struct free_delete
+	{
+		void operator()(void* x) { free(x); }
+	};
 	struct notification_info {
-		FILE_NOTIFY_INFORMATION* pInfo;
+		std::shared_ptr<FILE_NOTIFY_INFORMATION> pInfo;
 		OVERLAPPED overlapped;
 	};
 	std::vector<notification_info> notification_infos;
-	std::vector<HANDLE> wait_handles;
+	std::vector<scoped_handle> wait_handles;
 	const DWORD bufferSize = 4096;
 	size_t i = 0;
 	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
 		notification_info info;
-		info.pInfo = (FILE_NOTIFY_INFORMATION*)malloc(bufferSize);
+		info.pInfo = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(bufferSize), free_delete());
 
 		if (NULL == info.pInfo)
 		{
 			print("  Error: Could malloc pInfo.");
-			break;  // so we can cleanup below
+			return;
 		}
 
 		info.overlapped = { 0 };
-		::ZeroMemory(&info.overlapped, sizeof(OVERLAPPED));
+		ZeroMemory(&info.overlapped, sizeof(OVERLAPPED));
 
 		info.overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
 		if (NULL == info.overlapped.hEvent)
 		{
 			print("  Error: CreateEvent failed.");
-			break;  // so we can cleanup below
+			return;
 		}
 
 		// Check for modifications to any of the source code files
-		if (0 == ReadDirectoryChangesW(watcher_handles[i], info.pInfo, bufferSize, TRUE,
+		if (0 == ReadDirectoryChangesW(watcher_handles[i], info.pInfo.get(), bufferSize, TRUE,
 			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &info.overlapped, nullptr)) {
 			print("  Error: ReadDirectoryChangesW failed.");
-			break;  // so we can cleanup below
+			return;
 		}
 		notification_infos.push_back(info);
 		wait_handles.push_back(info.overlapped.hEvent);
@@ -225,104 +229,80 @@ return;
 
 	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
 		const DWORD wait_result = WaitForMultipleObjects(wait_handles.size(), &wait_handles[0], FALSE, INFINITE);
+		if (wait_result == WAIT_FAILED) {
+			break;
+		}
+		i = wait_result;
+		DWORD dwBytesTransferred = 0;
 
-		if (wait_result != WAIT_OBJECT_0)
+		const BOOL overlapped_success = GetOverlappedResult(watcher_handles[i], &notification_infos[i].overlapped,
+			&dwBytesTransferred, TRUE);
+
+		ResetEvent(wait_handles[i]);
+		if (0 == ReadDirectoryChangesW(watcher_handles[i], notification_infos[i].pInfo.get(), bufferSize, TRUE,
+			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[i].overlapped), nullptr)) {
+			print("  Error: ReadDirectoryChangesW failed.");
+			return;
+		}
+		if (!overlapped_success) {
+			print("  Error: GetOverlappedResult failed.");
+			return;
+		}
+
+		bool first_notification = true;
+		// Iterate over all notification items
+		for (auto info = notification_infos[i].pInfo.get(); first_notification || info->NextEntryOffset != 0;
+			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
 		{
-			print("  Error: Unexpected result from WaitForMultipleObjects");
-			break;  // so we can cleanup below
-		}
+			std::filesystem::path object_file, source_file =
+				_source_dirs[i] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
-		i = 0;
-		std::vector<size_t> indices_to_handle;
-		for (auto it = notification_infos.begin(); it != notification_infos.end(); ++it) {
-			if (HasOverlappedIoCompleted(&it->overlapped)) {
-				indices_to_handle.push_back(i);
-			}
-			++i;
-		}
+			// Ignore changes to files that are not C++ source files
+			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
+				continue;
 
-		for (auto it = indices_to_handle.begin(); it != indices_to_handle.end(); ++it) {
-			i = *it;
-			DWORD dwBytesTransferred = 0;
+			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
+			if (const auto current_time = GetTickCount(); _last_modifications[source_file.string()] + 3000 > current_time)
+				continue;
+			else
+				_last_modifications[source_file.string()] = current_time;
 
-			if (0 == GetOverlappedResult(watcher_handles[i], &notification_infos[i].overlapped,
-				&dwBytesTransferred, TRUE))
+			print("Detected modification to: " + source_file.string());
+
+			// Build compiler command line
+			std::string cmdline = build_compile_command_line(source_file, object_file);
+
+			// Append special completion message
+			cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
+
+			// Execute compiler command line
+			WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
+
+			// Read and react to compiler output messages
+			while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
 			{
-				print("  Error: GetOverlappedResult failed.");
-				break;  // so we can cleanup below
-			}
+				std::string message(size, '\0');
+				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
 
-			bool first_notification = true;
+				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
+					print(message.data() + offset, next - offset + 1);
 
-			// Iterate over all notification items
-			for (auto info = notification_infos[i].pInfo; first_notification || info->NextEntryOffset != 0;
-				first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
-			{
-				std::filesystem::path object_file, source_file =
-					_source_dirs[i] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
-
-				// Ignore changes to files that are not C++ source files
-				if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
-					continue;
-
-				// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
-				if (const auto current_time = GetTickCount(); _last_modifications[source_file.string()] + 3000 > current_time)
-					continue;
-				else
-					_last_modifications[source_file.string()] = current_time;
-
-				print("Detected modification to: " + source_file.string());
-
-				// Build compiler command line
-				std::string cmdline = build_compile_command_line(source_file, object_file);
-
-				// Append special completion message
-				cmdline += "\necho Finished compiling \"" + object_file.string() + "\" with code %errorlevel%.\n"; // Message used to confirm that compile finished in message loop above
-
-				// Execute compiler command line
-				WriteFile(compiler_stdin, cmdline.c_str(), static_cast<DWORD>(cmdline.size()), &size, nullptr);
-
-				// Read and react to compiler output messages
-				while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
+				// Listen for special completion message
+				if (const size_t offset = message.find(" with code "); offset != std::string::npos)
 				{
-					std::string message(size, '\0');
-					ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
-
-					for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
-						print(message.data() + offset, next - offset + 1);
-
-					// Listen for special completion message
-					if (const size_t offset = message.find(" with code "); offset != std::string::npos)
+					// Only load the compiled module if compilation was successful
+					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
 					{
-						// Only load the compiled module if compilation was successful
-						if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
-						{
-							call_symbol("__blink_sync", source_file.string().c_str()); // Notify application that we want to link an object file
-							const bool link_success = link(object_file);
-							call_symbol("__blink_release", source_file.string().c_str(), link_success); // Notify application that we have finished work
-						}
-						break;
+						call_symbol("__blink_sync", source_file.string().c_str()); // Notify application that we want to link an object file
+						const bool link_success = link(object_file);
+						call_symbol("__blink_release", source_file.string().c_str(), link_success); // Notify application that we have finished work
 					}
+					break;
 				}
-
-				// The OBJ file is not needed anymore.
-				DeleteFileW(object_file.c_str());
 			}
-		}
-	}
 
-	// cleanup
-	for (auto it = notification_infos.begin(); it != notification_infos.end(); ++it) {
-		if (NULL != it->pInfo)
-		{
-			free(it->pInfo);
-			it->pInfo = NULL;
-		}
-
-		if (NULL != it->overlapped.hEvent)
-		{
-			::CloseHandle(it->overlapped.hEvent);
-			it->overlapped.hEvent = NULL;
+			// The OBJ file is not needed anymore.
+			DeleteFileW(object_file.c_str());
 		}
 	}
 }

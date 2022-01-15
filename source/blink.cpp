@@ -29,15 +29,15 @@ static void common_paths(const std::vector<std::filesystem::path> &paths, std::v
 
 	add_unique_path(source_dirs, paths[0].parent_path());
 
-	for (auto pathIt = paths.begin() + 1; pathIt != paths.end(); ++pathIt) {
+	for (auto path_it = paths.begin() + 1; path_it != paths.end(); ++path_it) {
 		// only consider paths that exist, ie: can be watched
-		if (!std::filesystem::exists(*pathIt)) {
+		if (!std::filesystem::exists(*path_it)) {
 			continue;
 		}
-		std::filesystem::path file_directory = pathIt->parent_path();
-		std::vector<std::filesystem::path>::iterator found_path_iter = source_dirs.end();
-		for (std::vector<std::filesystem::path>::iterator dirIt = source_dirs.begin(); dirIt != source_dirs.end(); ++dirIt) {
-			auto source_dir = *dirIt;
+		std::filesystem::path file_directory = path_it->parent_path();
+		bool found_path = false;
+		for (std::vector<std::filesystem::path>::iterator dir_it = source_dirs.begin(); dir_it != source_dirs.end(); ++dir_it) {
+			auto source_dir = *dir_it;
 			std::filesystem::path common_path;
 			for (auto it2 = file_directory.begin(), it3 = source_dir.begin(); it2 != file_directory.end() && it3 != source_dir.end() && *it2 == *it3; ++it2, ++it3) {
 				common_path /= *it2;
@@ -47,11 +47,11 @@ static void common_paths(const std::vector<std::filesystem::path> &paths, std::v
 			}
 
 			if (!common_path.empty()) {
-				found_path_iter = dirIt;
-				*dirIt = common_path;
+				found_path = true;
+				*dir_it = common_path;
 			}
 		}
-		if (found_path_iter == source_dirs.end()) {
+		if (!found_path) {
 			// add the drive letter
 			if (file_directory.begin() != file_directory.end()) {
 				add_unique_path(source_dirs, file_directory);
@@ -162,46 +162,44 @@ void blink::application::run()
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
 	}
 
-	std::vector<scoped_handle> watcher_handles;
-
+	std::vector<scoped_handle> dir_handles;
 	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
 		auto source_dir = *it;
 
 		print("Starting file system watcher for '" + source_dir.string() + "' ...");
 
 		// Open handle to the common source code directory
-		watcher_handles.push_back(CreateFileW(source_dir.native().c_str(),
+		dir_handles.push_back(CreateFileW(source_dir.native().c_str(),
 			GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 			nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
 
-		if (watcher_handles.empty() || watcher_handles.back() == INVALID_HANDLE_VALUE)
+		if (dir_handles.empty() || dir_handles.back() == INVALID_HANDLE_VALUE)
 		{
 			print("  Error: Could not open directory handle.");
 			return;
 		}
 	}
 
-	DWORD size = 0;
-
 	struct free_delete
 	{
 		void operator()(void* x) { free(x); }
 	};
 	struct notification_info {
-		std::shared_ptr<FILE_NOTIFY_INFORMATION> pInfo;
+		std::shared_ptr<FILE_NOTIFY_INFORMATION> p_info;
 		OVERLAPPED overlapped;
 	};
 	std::vector<notification_info> notification_infos;
-	std::vector<scoped_handle> wait_handles;
-	const DWORD bufferSize = 4096;
-	size_t i = 0;
+	std::vector<scoped_handle> event_handles;
+	DWORD size = 0;
+	const DWORD buffer_size = 4096;
+	size_t dir_index = 0;
 	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
 		notification_info info;
-		info.pInfo = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(bufferSize), free_delete());
+		info.p_info = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(buffer_size), free_delete());
 
-		if (NULL == info.pInfo)
+		if (NULL == info.p_info)
 		{
-			print("  Error: Could malloc pInfo.");
+			print("  Error: Could malloc p_info.");
 			return;
 		}
 
@@ -217,30 +215,30 @@ void blink::application::run()
 		}
 
 		// Check for modifications to any of the source code files
-		if (0 == ReadDirectoryChangesW(watcher_handles[i], info.pInfo.get(), bufferSize, TRUE,
+		if (0 == ReadDirectoryChangesW(dir_handles[dir_index], info.p_info.get(), buffer_size, TRUE,
 			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &info.overlapped, nullptr)) {
 			print("  Error: ReadDirectoryChangesW failed.");
 			return;
 		}
 		notification_infos.push_back(info);
-		wait_handles.push_back(info.overlapped.hEvent);
-		++i;
+		event_handles.push_back(info.overlapped.hEvent);
+		++dir_index;
 	}
 
 	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
-		const DWORD wait_result = WaitForMultipleObjects(wait_handles.size(), &wait_handles[0], FALSE, INFINITE);
+		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(), &event_handles[0], FALSE, INFINITE);
 		if (wait_result == WAIT_FAILED) {
 			break;
 		}
-		i = wait_result;
-		DWORD dwBytesTransferred = 0;
+		dir_index = wait_result;
+		DWORD bytes_transferred = 0;
 
-		const BOOL overlapped_success = GetOverlappedResult(watcher_handles[i], &notification_infos[i].overlapped,
-			&dwBytesTransferred, TRUE);
+		const BOOL overlapped_success = GetOverlappedResult(dir_handles[dir_index], &notification_infos[dir_index].overlapped,
+			&bytes_transferred, TRUE);
 
-		ResetEvent(wait_handles[i]);
-		if (0 == ReadDirectoryChangesW(watcher_handles[i], notification_infos[i].pInfo.get(), bufferSize, TRUE,
-			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[i].overlapped), nullptr)) {
+		ResetEvent(event_handles[dir_index]);
+		if (0 == ReadDirectoryChangesW(dir_handles[dir_index], notification_infos[dir_index].p_info.get(), buffer_size, TRUE,
+			FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
 			print("  Error: ReadDirectoryChangesW failed.");
 			return;
 		}
@@ -251,11 +249,11 @@ void blink::application::run()
 
 		bool first_notification = true;
 		// Iterate over all notification items
-		for (auto info = notification_infos[i].pInfo.get(); first_notification || info->NextEntryOffset != 0;
+		for (auto info = notification_infos[dir_index].p_info.get(); first_notification || info->NextEntryOffset != 0;
 			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
 		{
 			std::filesystem::path object_file, source_file =
-				_source_dirs[i] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
+				_source_dirs[dir_index] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
 			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")

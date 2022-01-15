@@ -30,7 +30,7 @@ static void common_paths(const std::vector<std::filesystem::path> &paths, std::v
 	add_unique_path(source_dirs, paths[0].parent_path());
 
 	for (auto path_it = paths.begin() + 1; path_it != paths.end(); ++path_it) {
-		// only consider paths that exist, ie: can be watched
+		// only consider files that exist, ie: can be watched
 		if (!std::filesystem::exists(*path_it)) {
 			continue;
 		}
@@ -42,20 +42,13 @@ static void common_paths(const std::vector<std::filesystem::path> &paths, std::v
 			for (auto it2 = file_directory.begin(), it3 = source_dir.begin(); it2 != file_directory.end() && it3 != source_dir.end() && *it2 == *it3; ++it2, ++it3) {
 				common_path /= *it2;
 			}
-			if (common_path.u8string().length() < 8) {
-				bool test = true;
-			}
-
 			if (!common_path.empty()) {
 				found_path = true;
 				*dir_it = common_path;
 			}
 		}
-		if (!found_path) {
-			// add the drive letter
-			if (file_directory.begin() != file_directory.end()) {
-				add_unique_path(source_dirs, file_directory);
-			}
+		if (!found_path && !file_directory.empty()) {
+			add_unique_path(source_dirs, file_directory);
 		}
 	}
 }

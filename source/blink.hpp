@@ -48,7 +48,7 @@ namespace blink
 	private:
 		struct free_delete
 		{
-			void operator()(void* x) { free(x); }
+			void operator()(void *x) { free(x); }
 		};
 		struct notification_info {
 			std::shared_ptr<FILE_NOTIFY_INFORMATION> p_info;
@@ -63,9 +63,9 @@ namespace blink
 
 		void set_watch(
 			const size_t dir_index,
-			std::vector<scoped_handle>& dir_handles,
-			std::vector<scoped_handle>& event_handles,
-			std::vector<notification_info>& notification_infos);
+			std::vector<scoped_handle> &dir_handles,
+			std::vector<scoped_handle> &event_handles,
+			std::vector<notification_info> &notification_infos);
 		std::string build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const;
 
 		uint8_t *_image_base = nullptr;

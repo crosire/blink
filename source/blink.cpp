@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-static void add_unique_path(std::vector<std::filesystem::path>& paths, const std::filesystem::path &path)
+static void add_unique_path(std::vector<std::filesystem::path> &paths, const std::filesystem::path &path)
 {
 	if (path.empty())
 		return;
@@ -362,7 +362,7 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 void blink::application::set_watch(
 	const size_t dir_index,
 	std::vector<scoped_handle> &dir_handles,
-	std::vector<scoped_handle>& event_handles,
+	std::vector<scoped_handle> &event_handles,
 	std::vector<notification_info> &notification_infos)
 {
 	dir_handles[dir_index].reset(CreateFileW(_source_dirs[dir_index].native().c_str(),

@@ -166,12 +166,8 @@ void blink::application::run()
 		notification_info info;
 		notification_infos.push_back(info);
 
-		set_watch(
-			dir_index,
-			dir_handles,
-			event_handles,
-			notification_infos);
-
+		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
+			return;
 		++dir_index;
 	}
 
@@ -247,11 +243,8 @@ void blink::application::run()
 			// The OBJ file is not needed anymore.
 			DeleteFileW(object_file.c_str());
 		}
-		set_watch(
-			dir_index,
-			dir_handles,
-			event_handles,
-			notification_infos);
+		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
+			return;
 	}
 }
 
@@ -359,7 +352,7 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 	}
 }
 
-void blink::application::set_watch(
+bool blink::application::set_watch(
 	const size_t dir_index,
 	std::vector<scoped_handle> &dir_handles,
 	std::vector<scoped_handle> &event_handles,
@@ -371,14 +364,14 @@ void blink::application::set_watch(
 	if (dir_handles[dir_index] == INVALID_HANDLE_VALUE)
 	{
 		print("  Error: Could not open directory handle.");
-		return;
+		return false;
 	}
 	const size_t buffer_size = 4096;
 	notification_infos[dir_index].p_info = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(buffer_size), free_delete());
 	if (NULL == notification_infos[dir_index].p_info)
 	{
 		print("  Error: Could malloc p_info.");
-		return;
+		return false;
 	}
 	notification_infos[dir_index].overlapped = { 0 };
 	ZeroMemory(&(notification_infos[dir_index].overlapped), sizeof(OVERLAPPED));
@@ -388,15 +381,16 @@ void blink::application::set_watch(
 	if (NULL == event_handles[dir_index])
 	{
 		print("  Error: CreateEvent failed.");
-		return;
+		return false;
 	}
 
 	DWORD size = 0;
 	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], notification_infos[dir_index].p_info.get(), buffer_size, TRUE,
 		FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
 		print("  Error: ReadDirectoryChangesW failed.");
-		return;
+		return false;
 	}
+	return true;
 }
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const

@@ -61,7 +61,7 @@ namespace blink
 		bool read_debug_info(const uint8_t *image_base);
 		void read_import_address_table(const uint8_t *image_base);
 
-		void set_watch(
+		bool set_watch(
 			const size_t dir_index,
 			std::vector<scoped_handle> &dir_handles,
 			std::vector<scoped_handle> &event_handles,

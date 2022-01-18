@@ -35,7 +35,7 @@ namespace blink
 			std::string str(path.u8string());
 			for (std::size_t index = 0; index < str.size(); ++index) {
 				auto ch = static_cast<unsigned char>(str[index]);
-				str[index] = static_cast<unsigned char>(std::tolower(ch));
+				str[index] = static_cast<unsigned char>(std::tolower(ch, std::locale("en_US.utf8")));
 			}
 			return std::hash<std::string>{}(str);
 		}

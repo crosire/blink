@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "pdb_reader.hpp"
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -56,6 +57,7 @@ namespace blink
 		std::filesystem::path _source_dir;
 		std::vector<std::filesystem::path> _object_files;
 		std::vector<std::vector<std::filesystem::path>> _source_files;
+		source_file_map _source_file_map;
 		std::unordered_map<std::string, void *> _symbols;
 		std::unordered_map<std::string, uint32_t> _last_modifications;
 	};

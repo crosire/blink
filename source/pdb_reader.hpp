@@ -25,6 +25,30 @@ namespace blink
 		bool operator!=(const guid &other) { return !operator==(other); }
 	};
 
+	struct source_file_indices {
+		size_t module = 0;
+		size_t file = 0;
+	};
+
+	struct path_hash {
+		std::size_t operator()(const std::filesystem::path &path) const {
+			std::string str(path.u8string());
+			for (std::size_t index = 0; index < str.size(); ++index) {
+				auto ch = static_cast<unsigned char>(str[index]);
+				str[index] = static_cast<unsigned char>(std::tolower(ch));
+			}
+			return std::hash<std::string>{}(str);
+		}
+	};
+
+	struct path_comp {
+		bool operator() (const std::filesystem::path& lhs, const std::filesystem::path& rhs) const {
+			return _stricmp(lhs.u8string().c_str(), rhs.u8string().c_str()) == 0;
+		}
+	};
+
+	typedef std::unordered_map<std::filesystem::path, source_file_indices, path_hash, path_comp> source_file_map;
+
 	/// <summary>
 	/// Class which reads a program debug database.
 	/// </summary>
@@ -74,7 +98,8 @@ namespace blink
 		/// <summary>
 		/// Returns all source code file paths that were used to build the application.
 		/// </summary>
-		void read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files);
+		void read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files,
+			source_file_map &file_map);
 
 		/// <summary>
 		/// Read linker information.

@@ -272,7 +272,8 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 	}
 }
 
-void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files)
+void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files,
+	source_file_map &file_map)
 {
 	stream_reader stream(msf_reader::stream(3));
 
@@ -312,7 +313,11 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 		for (uint32_t i = 0; i < num_files; ++i)
 		{
 			stream.seek(offset + file_name_offsets[file_name_offset_index]);
-			source_files[n + k][i] = stream.read_string();
+			source_file_indices indices;
+			indices.module = n + k;
+			indices.file = i;
+			source_files[indices.module][indices.file] = stream.read_string();
+			file_map.insert(std::make_pair(source_files[indices.module][indices.file], indices));
 			file_name_offset_index += 1;
 		}
 	}

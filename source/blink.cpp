@@ -160,10 +160,9 @@ void blink::application::run()
 		auto source_dir = *it;
 		print("Starting file system watcher for '" + source_dir.string() + "' ...");
 
-		dir_handles.emplace_back(INVALID_HANDLE_VALUE);
-		event_handles.emplace_back(INVALID_HANDLE_VALUE);
-		notification_info info;
-		notification_infos.emplace_back(info);
+		dir_handles.emplace_back();
+		event_handles.emplace_back();
+		notification_infos.emplace_back();
 
 		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
 			return;

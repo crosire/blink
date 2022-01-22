@@ -4,7 +4,6 @@
  */
 
 #include "blink.hpp"
-#include "pdb_reader.hpp"
 #include "coff_reader.hpp"
 #include <string>
 #include <algorithm>
@@ -298,7 +297,7 @@ bool blink::application::read_debug_info(const BYTE *image_base)
 
 	pdb.read_symbol_table(_image_base, _symbols);
 	pdb.read_object_files(_object_files);
-	pdb.read_source_files(_source_files);
+	pdb.read_source_files(_source_files, _source_file_map);
 
 	return true;
 }
@@ -400,12 +399,10 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 	Sleep(100); // Prevent file system error in the next few code lines, TODO: figure out what causes this
 
 	// Check if this source file already exists in the application in which case we can read some information from the original object file
-	if (const auto it = std::find_if(_source_files.begin(), _source_files.end(), [&source_file](const auto &module_files) {
-			return std::find_if(module_files.begin(), module_files.end(), [&source_file](const auto &file) {
-				std::error_code ec; return std::filesystem::equivalent(source_file, file, ec); }) != module_files.end();
-		}); it != _source_files.end())
+	auto it = _source_file_map.find(source_file);
+	if (it != _source_file_map.end())
 	{
-		object_file = _object_files[std::distance(_source_files.begin(), it)];
+		object_file = _object_files[it->second.module];
 
 		// Read original object file
 		COFF_HEADER header;

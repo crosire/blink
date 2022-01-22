@@ -5,29 +5,49 @@
 
 #include "blink.hpp"
 #include "coff_reader.hpp"
-#include "scoped_handle.hpp"
 #include <string>
 #include <algorithm>
 #include <unordered_map>
-#include <Windows.h>
 
-static std::filesystem::path common_path(const std::vector<std::filesystem::path> &paths)
+static void add_unique_path(std::vector<std::filesystem::path> &paths, const std::filesystem::path &path)
+{
+	if (path.empty())
+		return;
+
+	if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+		paths.push_back(path);
+	}
+}
+
+static void common_paths(const std::vector<std::filesystem::path> &paths, std::vector<std::filesystem::path> &source_dirs)
 {
 	if (paths.empty())
-		return std::filesystem::path();
+		return;
 
-	std::filesystem::path all_common_path = paths[0].parent_path();
+	add_unique_path(source_dirs, paths[0].parent_path());
 
-	for (auto it = paths.begin() + 1; it != paths.end(); ++it) {
-		std::filesystem::path common_path;
-		std::filesystem::path file_directory = it->parent_path();
-		for (auto it2 = file_directory.begin(), it3 = all_common_path.begin(); it2 != file_directory.end() && it3 != all_common_path.end() && *it2 == *it3; ++it2, ++it3) {
-			common_path /= *it2;
+	for (auto path_it = paths.begin() + 1; path_it != paths.end(); ++path_it) {
+		// only consider files that exist, ie: can be watched
+		if (!std::filesystem::exists(*path_it)) {
+			continue;
 		}
-		all_common_path = common_path;
+		std::filesystem::path file_directory = path_it->parent_path();
+		bool found_path = false;
+		for (std::vector<std::filesystem::path>::iterator dir_it = source_dirs.begin(); dir_it != source_dirs.end(); ++dir_it) {
+			auto source_dir = *dir_it;
+			std::filesystem::path common_path;
+			for (auto it2 = file_directory.begin(), it3 = source_dir.begin(); it2 != file_directory.end() && it3 != source_dir.end() && *it2 == *it3; ++it2, ++it3) {
+				common_path /= *it2;
+			}
+			if (!common_path.empty()) {
+				found_path = true;
+				*dir_it = common_path;
+			}
+		}
+		if (!found_path && !file_directory.empty()) {
+			add_unique_path(source_dirs, file_directory);
+		}
 	}
-
-	return all_common_path;
 }
 
 blink::application::application()
@@ -72,13 +92,13 @@ void blink::application::run()
 			}
 		}
 
-		// The linker is invoked in solution directory, which may be out of source directory. Use source common path instead.
-		_source_dir = common_path(cpp_files);
+		// The linker is invoked in solution directory, which may be out of source directory. Use source common paths instead.
+		common_paths(cpp_files, _source_dirs);
 	}
 
-	if (_source_dir.empty())
+	if (_source_dirs.empty())
 	{
-		print("  Error: Could not determine project directory. Make sure all source code files are on the same drive.");
+		print("  Error: Could not determine source directories. Check your .pdb file for source files.");
 		return;
 	}
 
@@ -132,30 +152,48 @@ void blink::application::run()
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
 	}
 
-	print("Starting file system watcher for '" + _source_dir.string() + "' ...");
+	size_t dir_index = 0;
+	std::vector<scoped_handle> dir_handles;
+	std::vector<scoped_handle> event_handles;
+	std::vector<notification_info> notification_infos;
+	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
+		auto source_dir = *it;
+		print("Starting file system watcher for '" + source_dir.string() + "' ...");
 
-	// Open handle to the common source code directory
-	const scoped_handle watcher_handle = CreateFileW(_source_dir.native().c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+		dir_handles.emplace_back();
+		event_handles.emplace_back();
+		notification_infos.emplace_back();
 
-	if (watcher_handle == INVALID_HANDLE_VALUE)
-	{
-		print("  Error: Could not open directory handle.");
-		return;
+		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
+			return;
+		++dir_index;
 	}
 
-	DWORD size = 0; BYTE watcher_buffer[4096];
+	DWORD size = 0;
+	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
+		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(),
+			reinterpret_cast<const HANDLE*>(event_handles.data()), FALSE, INFINITE);
+		if (wait_result == WAIT_FAILED) {
+			break;
+		}
+		dir_index = wait_result;
+		DWORD bytes_transferred = 0;
 
-	// Check for modifications to any of the source code files
-	while (ReadDirectoryChangesW(watcher_handle, watcher_buffer, sizeof(watcher_buffer), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, nullptr, nullptr))
-	{
+		const BOOL overlapped_success = GetOverlappedResult(dir_handles[dir_index], &notification_infos[dir_index].overlapped,
+			&bytes_transferred, TRUE);
+
+		if (!overlapped_success) {
+			print("  Error: GetOverlappedResult failed.");
+			return;
+		}
+
 		bool first_notification = true;
-
 		// Iterate over all notification items
-		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(watcher_buffer); first_notification || info->NextEntryOffset != 0;
-			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
+		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()); first_notification || info->NextEntryOffset != 0;
+			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
 		{
 			std::filesystem::path object_file, source_file =
-				_source_dir / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
+				_source_dirs[dir_index] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
 			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
@@ -204,6 +242,8 @@ void blink::application::run()
 			// The OBJ file is not needed anymore.
 			DeleteFileW(object_file.c_str());
 		}
+		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
+			return;
 	}
 }
 
@@ -249,7 +289,11 @@ bool blink::application::read_debug_info(const BYTE *image_base)
 
 	// The linker working directory should equal the project root directory
 	std::string linker_cmd;
-	pdb.read_link_info(_source_dir, linker_cmd);
+	std::filesystem::path source_dir;
+	pdb.read_link_info(source_dir, linker_cmd);
+	if (!source_dir.empty()) {
+		add_unique_path(_source_dirs, source_dir);
+	}
 
 	pdb.read_symbol_table(_image_base, _symbols);
 	pdb.read_object_files(_object_files);
@@ -305,6 +349,38 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 
 		read_debug_info(target_base);
 	}
+}
+
+bool blink::application::set_watch(
+	const size_t dir_index,
+	std::vector<scoped_handle> &dir_handles,
+	std::vector<scoped_handle> &event_handles,
+	std::vector<notification_info> &notification_infos)
+{
+	dir_handles[dir_index].reset(CreateFileW(_source_dirs[dir_index].native().c_str(),
+		GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
+	if (dir_handles[dir_index] == INVALID_HANDLE_VALUE)
+	{
+		print("  Error: Could not open directory handle.");
+		return false;
+	}
+
+	notification_infos[dir_index].overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	event_handles[dir_index].reset(notification_infos[dir_index].overlapped.hEvent);
+	if (NULL == event_handles[dir_index])
+	{
+		print("  Error: CreateEvent failed.");
+		return false;
+	}
+
+	DWORD size = 0;
+	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()),
+		notification_infos[dir_index].p_info.size(), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
+		print("  Error: ReadDirectoryChangesW failed.");
+		return false;
+	}
+	return true;
 }
 
 std::string blink::application::build_compile_command_line(const std::filesystem::path &source_file, std::filesystem::path &object_file) const

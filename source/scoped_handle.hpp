@@ -21,6 +21,13 @@ struct scoped_handle
 
 	operator HANDLE() const { return handle; }
 
+	void reset(const HANDLE p) {
+		if (handle != p) {
+			if (handle != NULL && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+			handle = p;
+		}
+	}
+
 	HANDLE *operator&() { return &handle; }
 	const HANDLE *operator&() const { return &handle; }
 };

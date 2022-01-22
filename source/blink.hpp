@@ -47,12 +47,13 @@ namespace blink
 		}
 
 	private:
-		struct free_delete
+		class notification_info
 		{
-			void operator()(void *x) { free(x); }
-		};
-		struct notification_info {
-			std::shared_ptr<FILE_NOTIFY_INFORMATION> p_info;
+			public:
+				notification_info() : p_info(buffer_size), overlapped({ 0 }) {}
+
+			const size_t buffer_size = 4096;
+			std::vector<BYTE> p_info;
 			OVERLAPPED overlapped;
 		};
 

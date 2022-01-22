@@ -160,10 +160,10 @@ void blink::application::run()
 		auto source_dir = *it;
 		print("Starting file system watcher for '" + source_dir.string() + "' ...");
 
-		dir_handles.push_back(INVALID_HANDLE_VALUE);
-		event_handles.push_back(INVALID_HANDLE_VALUE);
+		dir_handles.emplace_back(INVALID_HANDLE_VALUE);
+		event_handles.emplace_back(INVALID_HANDLE_VALUE);
 		notification_info info;
-		notification_infos.push_back(info);
+		notification_infos.emplace_back(info);
 
 		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
 			return;
@@ -172,7 +172,8 @@ void blink::application::run()
 
 	DWORD size = 0;
 	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
-		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(), &event_handles[0], FALSE, INFINITE);
+		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(),
+			reinterpret_cast<const HANDLE*>(event_handles.data()), FALSE, INFINITE);
 		if (wait_result == WAIT_FAILED) {
 			break;
 		}
@@ -189,7 +190,7 @@ void blink::application::run()
 
 		bool first_notification = true;
 		// Iterate over all notification items
-		for (auto info = notification_infos[dir_index].p_info.get(); first_notification || info->NextEntryOffset != 0;
+		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()); first_notification || info->NextEntryOffset != 0;
 			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
 		{
 			std::filesystem::path object_file, source_file =
@@ -365,15 +366,6 @@ bool blink::application::set_watch(
 		print("  Error: Could not open directory handle.");
 		return false;
 	}
-	const size_t buffer_size = 4096;
-	notification_infos[dir_index].p_info = std::shared_ptr<FILE_NOTIFY_INFORMATION>((FILE_NOTIFY_INFORMATION*)malloc(buffer_size), free_delete());
-	if (NULL == notification_infos[dir_index].p_info)
-	{
-		print("  Error: Could malloc p_info.");
-		return false;
-	}
-	notification_infos[dir_index].overlapped = { 0 };
-	ZeroMemory(&(notification_infos[dir_index].overlapped), sizeof(OVERLAPPED));
 
 	notification_infos[dir_index].overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 	event_handles[dir_index].reset(notification_infos[dir_index].overlapped.hEvent);
@@ -384,8 +376,8 @@ bool blink::application::set_watch(
 	}
 
 	DWORD size = 0;
-	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], notification_infos[dir_index].p_info.get(), buffer_size, TRUE,
-		FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
+	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()),
+		notification_infos[dir_index].p_info.size(), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
 		print("  Error: ReadDirectoryChangesW failed.");
 		return false;
 	}

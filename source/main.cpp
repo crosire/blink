@@ -26,6 +26,7 @@ extern "C" void _initterm(_PVFV *beg, _PVFV *end);
 #pragma endregion
 
 HANDLE console = INVALID_HANDLE_VALUE;
+char blink_pipe_name[MAX_PATH];
 
 void print(const char *message, size_t length)
 {
@@ -131,8 +132,10 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 	_initterm(__xc_a, __xc_z);
 	#pragma endregion
 
+	scoped_handle blink_handle = CreateFileA(blink_pipe_name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
+
 	// Run main loop
-	blink::application().run();
+	blink::application().run(blink_handle);
 
 	CloseHandle(console);
 
@@ -280,7 +283,23 @@ int main(int argc, char *argv[])
 	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, module_info.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
 #endif
 
-	// Copy current module image to target application (including the IAT and value of the global 'console' variable)
+	_snprintf_s(blink_pipe_name, sizeof(blink_pipe_name), "\\\\.\\pipe\\blink-%d", GetCurrentProcessId());
+	#define NAMED_PIPE_SIZE 1024
+	// use duplex named pipe, so remote thread can quit and free up memory, when blink.exe quits
+	scoped_handle blink_pipe_handle = CreateNamedPipeA(
+		reinterpret_cast<LPCSTR>(blink_pipe_name),
+		PIPE_ACCESS_DUPLEX
+		| FILE_FLAG_WRITE_THROUGH,
+		PIPE_TYPE_BYTE | PIPE_WAIT,
+		1, NAMED_PIPE_SIZE, NAMED_PIPE_SIZE,
+		10000, NULL);
+	if (!blink_pipe_handle)
+	{
+		std::cout << "Failed to create blink pipe!" << std::endl;
+		return GetLastError();
+	}
+
+	// Copy current module image to target application (including the IAT and value of the global variables)
 	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, module_info.lpBaseOfDll, module_info.SizeOfImage, nullptr))
 	{
 		std::cout << "Failed to allocate and write image in target application!" << std::endl;

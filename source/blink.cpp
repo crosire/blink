@@ -57,7 +57,7 @@ blink::application::application()
 	_symbols.insert({ "__ImageBase", _image_base });
 }
 
-void blink::application::run()
+void blink::application::run(HANDLE blink_handle)
 {
 	std::vector<const BYTE *> dlls;
 
@@ -170,12 +170,15 @@ void blink::application::run()
 	}
 
 	DWORD size = 0;
-	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)) {
-		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(),
-			reinterpret_cast<const HANDLE*>(event_handles.data()), FALSE, INFINITE);
-		if (wait_result == WAIT_FAILED) {
+	DWORD bytes_written = 0;
+	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr) &&
+		PeekNamedPipe(blink_handle, nullptr, 0, nullptr, &size, nullptr)  // while blink.exe is still running
+	) {
+		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(), &event_handles[0], FALSE, 1000);
+		if (wait_result == WAIT_FAILED)
 			break;
-		}
+		if (wait_result == WAIT_TIMEOUT)
+			continue;
 		dir_index = wait_result;
 		DWORD bytes_transferred = 0;
 

@@ -28,7 +28,7 @@ namespace blink
 	public:
 		application();
 
-		void run(HANDLE blink_handle);
+		void run(HANDLE blink_handle, TCHAR* blink_environment, TCHAR* blink_working_directory);
 		bool link(const std::filesystem::path &object_file);
 
 		template <typename T>

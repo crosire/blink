@@ -27,6 +27,9 @@ extern "C" void _initterm(_PVFV *beg, _PVFV *end);
 
 HANDLE console = INVALID_HANDLE_VALUE;
 char blink_pipe_name[MAX_PATH];
+#define MAX_ENVIRONMENT_LENGTH 32767 // max for Windows
+TCHAR blink_environment[MAX_ENVIRONMENT_LENGTH];
+TCHAR blink_working_directory[MAX_PATH];
 
 void print(const char *message, size_t length)
 {
@@ -135,7 +138,7 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 	scoped_handle blink_handle = CreateFileA(blink_pipe_name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
 
 	// Run main loop
-	blink::application().run(blink_handle);
+	blink::application().run(blink_handle, blink_environment, blink_working_directory);
 
 	CloseHandle(console);
 
@@ -298,6 +301,26 @@ int main(int argc, char *argv[])
 		std::cout << "Failed to create blink pipe!" << std::endl;
 		return GetLastError();
 	}
+
+	// Get blink.exe's environment, so we can use it for compiles in the remote thread.
+	const LPWCH environment = GetEnvironmentStringsW();
+	LPWCH environment_end = environment;
+	for (; *environment_end != '\0'; environment_end += wcslen(environment_end) + 1)
+	{
+		// continue until we find the double null end
+	}
+	environment_end += 1; // get position after the double null end
+	const size_t environment_length = environment_end - environment;
+	if (environment_length > MAX_ENVIRONMENT_LENGTH)
+	{
+		std::cout << "Environment string exceeded max length!" << std::endl;
+		return ERROR_NOT_ENOUGH_MEMORY;
+	}
+	memcpy(blink_environment, environment, environment_length * sizeof(wchar_t));
+	FreeEnvironmentStringsW(environment);
+
+	// Get blink.exe's working directory, so we can use it for compiles in the remote thread.
+	wcscpy_s(blink_working_directory, std::filesystem::current_path().c_str());
 
 	// Copy current module image to target application (including the IAT and value of the global variables)
 	if (remote_baseaddress == nullptr || !WriteProcessMemory(remote_process, remote_baseaddress, module_info.lpBaseOfDll, module_info.SizeOfImage, nullptr))

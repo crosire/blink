@@ -28,8 +28,8 @@ extern "C" void _initterm(_PVFV *beg, _PVFV *end);
 HANDLE console = INVALID_HANDLE_VALUE;
 char blink_pipe_name[MAX_PATH];
 #define MAX_ENVIRONMENT_LENGTH 32767 // max for Windows
-TCHAR blink_environment[MAX_ENVIRONMENT_LENGTH];
-TCHAR blink_working_directory[MAX_PATH];
+wchar_t blink_environment[MAX_ENVIRONMENT_LENGTH];
+wchar_t blink_working_directory[MAX_PATH];
 
 void print(const char *message, size_t length)
 {

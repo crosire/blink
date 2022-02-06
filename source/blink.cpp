@@ -57,7 +57,7 @@ blink::application::application()
 	_symbols.insert({ "__ImageBase", _image_base });
 }
 
-void blink::application::run(HANDLE blink_handle, TCHAR* blink_environment, TCHAR* blink_working_directory)
+void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wchar_t* blink_working_directory)
 {
 	std::vector<const BYTE *> dlls;
 

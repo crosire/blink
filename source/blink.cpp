@@ -57,7 +57,7 @@ blink::application::application()
 	_symbols.insert({ "__ImageBase", _image_base });
 }
 
-void blink::application::run(HANDLE blink_handle)
+void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wchar_t* blink_working_directory)
 {
 	std::vector<const BYTE *> dlls;
 
@@ -135,7 +135,12 @@ void blink::application::run(HANDLE blink_handle)
 		TCHAR cmdline[] = TEXT("cmd.exe /q /d /k @echo off");
 		PROCESS_INFORMATION pi;
 
-		if (!CreateProcess(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+		// Use blink.exe's environment and working directory for our compiler process.
+		// This way, the user can run blink.exe from their build prompt and our compiler
+		// process will run compiles similar to how they run from the user's prompt.
+		if (!CreateProcess(nullptr, cmdline, nullptr, nullptr, TRUE,
+			CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, reinterpret_cast<LPVOID>(blink_environment),
+			blink_working_directory, &si, &pi))
 		{
 			print("  Error: Could not create process.");
 

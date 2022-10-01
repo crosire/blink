@@ -10,9 +10,7 @@
 #include <vector>
 #include <string>
 #include <filesystem>
-#include <unordered_set>
 #include <unordered_map>
-#include <Windows.h>
 
 void print(const char *message, size_t length);
 inline void print(std::string message)
@@ -28,7 +26,7 @@ namespace blink
 	public:
 		application();
 
-		void run(HANDLE blink_handle, wchar_t* blink_environment, wchar_t* blink_working_directory);
+		void run(void *const blink_handle, const wchar_t *blink_environment = nullptr, const wchar_t *blink_working_directory = nullptr);
 		bool link(const std::filesystem::path &object_file);
 
 		template <typename T>

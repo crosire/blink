@@ -5,48 +5,42 @@
 
 #include "blink.hpp"
 #include "coff_reader.hpp"
-#include <string>
 #include <algorithm>
-#include <unordered_map>
 
 static void add_unique_path(std::vector<std::filesystem::path> &paths, const std::filesystem::path &path)
 {
 	if (path.empty())
 		return;
-
-	if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+	if (std::find(paths.begin(), paths.end(), path) == paths.end())
 		paths.push_back(path);
-	}
 }
 
-static void common_paths(const std::vector<std::filesystem::path> &paths, std::vector<std::filesystem::path> &source_dirs)
+static void find_common_paths(const std::vector<std::filesystem::path> &paths, std::vector<std::filesystem::path> &source_dirs)
 {
 	if (paths.empty())
 		return;
 
 	add_unique_path(source_dirs, paths[0].parent_path());
 
-	for (auto path_it = paths.begin() + 1; path_it != paths.end(); ++path_it) {
-		// only consider files that exist, ie: can be watched
-		if (!std::filesystem::exists(*path_it)) {
+	for (auto path_it = paths.begin() + 1; path_it != paths.end(); ++path_it)
+	{
+		// Only consider files that do actually exist
+		if (!std::filesystem::exists(*path_it))
 			continue;
-		}
+
+		std::filesystem::path common_path;
 		std::filesystem::path file_directory = path_it->parent_path();
-		bool found_path = false;
-		for (std::vector<std::filesystem::path>::iterator dir_it = source_dirs.begin(); dir_it != source_dirs.end(); ++dir_it) {
-			auto source_dir = *dir_it;
-			std::filesystem::path common_path;
-			for (auto it2 = file_directory.begin(), it3 = source_dir.begin(); it2 != file_directory.end() && it3 != source_dir.end() && *it2 == *it3; ++it2, ++it3) {
+		for (auto dir_it = source_dirs.begin(); dir_it != source_dirs.end(); ++dir_it)
+		{
+			common_path.clear();
+			for (auto it2 = file_directory.begin(), it3 = dir_it->begin(); it2 != file_directory.end() && it3 != dir_it->end() && *it2 == *it3; ++it2, ++it3)
 				common_path /= *it2;
-			}
-			if (!common_path.empty()) {
-				found_path = true;
+			if (!common_path.empty())
 				*dir_it = common_path;
-			}
 		}
-		if (!found_path && !file_directory.empty()) {
+
+		if (!common_path.empty() && !file_directory.empty())
 			add_unique_path(source_dirs, file_directory);
-		}
 	}
 }
 
@@ -57,7 +51,7 @@ blink::application::application()
 	_symbols.insert({ "__ImageBase", _image_base });
 }
 
-void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wchar_t* blink_working_directory)
+void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_environment, const wchar_t *blink_working_directory)
 {
 	std::vector<const BYTE *> dlls;
 
@@ -93,12 +87,12 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 		}
 
 		// The linker is invoked in solution directory, which may be out of source directory. Use source common paths instead.
-		common_paths(cpp_files, _source_dirs);
+		find_common_paths(cpp_files, _source_dirs);
 	}
 
 	if (_source_dirs.empty())
 	{
-		print("  Error: Could not determine source directories. Check your .pdb file for source files.");
+		print("  Error: Could not determine source directories. Check your program debug database for source files.");
 		return;
 	}
 
@@ -132,15 +126,12 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 
 		si.hStdError = si.hStdOutput;
 
-		TCHAR cmdline[] = TEXT("cmd.exe /q /d /k @echo off");
+		wchar_t cmdline[] = L"cmd.exe /q /d /k @echo off";
 		PROCESS_INFORMATION pi;
 
-		// Use blink.exe's environment and working directory for our compiler process.
-		// This way, the user can run blink.exe from their build prompt and our compiler
-		// process will run compiles similar to how they run from the user's prompt.
-		if (!CreateProcess(nullptr, cmdline, nullptr, nullptr, TRUE,
-			CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, reinterpret_cast<LPVOID>(blink_environment),
-			blink_working_directory, &si, &pi))
+		// Use environment and working directory of the blink application for the compiler process
+		// This way, the user can run blink from their build prompt and the compiler process will compile similar to how it would when run from the user prompt directly
+		if (!CreateProcessW(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, reinterpret_cast<LPVOID>(const_cast<wchar_t *>(blink_environment)), blink_working_directory, &si, &pi))
 		{
 			print("  Error: Could not create process.");
 
@@ -181,10 +172,11 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 
 	DWORD size = 0;
 	DWORD bytes_written = 0;
-	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr) &&
-		PeekNamedPipe(blink_handle, nullptr, 0, nullptr, &size, nullptr)  // while blink.exe is still running
-	) {
-		const DWORD wait_result = WaitForMultipleObjects(event_handles.size(), &event_handles[0], FALSE, 1000);
+	DWORD bytes_transferred = 0;
+	// Check that both the compiler and blink application are still running
+	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr) && PeekNamedPipe(blink_handle, nullptr, 0, nullptr, &size, nullptr))
+	{
+		const DWORD wait_result = WaitForMultipleObjects(static_cast<DWORD>(event_handles.size()), reinterpret_cast<const HANDLE *>(event_handles.data()), FALSE, 1000);
 		if (wait_result == WAIT_FAILED)
 			break;
 		if (wait_result == WAIT_TIMEOUT)
@@ -196,8 +188,8 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 
 		bool first_notification = true;
 		// Iterate over all notification items
-		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()); first_notification || info->NextEntryOffset != 0;
-			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(info) + info->NextEntryOffset))
+		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(notification_infos[dir_index].p_info.data()); first_notification || info->NextEntryOffset != 0;
+			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
 		{
 			std::filesystem::path object_file, source_file =
 				_source_dirs[dir_index] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
@@ -305,11 +297,10 @@ bool blink::application::read_debug_info(const BYTE *image_base)
 
 	// The linker working directory should equal the project root directory
 	std::string linker_cmd;
-	std::filesystem::path source_dir;
-	pdb.read_link_info(source_dir, linker_cmd);
-	if (!source_dir.empty()) {
-		add_unique_path(_source_dirs, source_dir);
-	}
+	std::filesystem::path cwd;
+	pdb.read_link_info(cwd, linker_cmd);
+	if (!cwd.empty())
+		add_unique_path(_source_dirs, cwd);
 
 	pdb.read_symbol_table(_image_base, _symbols);
 	pdb.read_object_files(_object_files);
@@ -393,8 +384,8 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 	Sleep(100); // Prevent file system error in the next few code lines, TODO: figure out what causes this
 
 	// Check if this source file already exists in the application in which case we can read some information from the original object file
-	auto it = _source_file_map.find(source_file);
-	if (it != _source_file_map.end())
+	if (const auto it = _source_file_map.find(source_file);
+		it != _source_file_map.end())
 	{
 		object_file = _object_files[it->second.module];
 
@@ -467,10 +458,12 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 			"/EHsc " // Enable C++ exceptions
 			"/std:c++latest " // C++ standard version
 			"/Zc:wchar_t /Zc:forScope /Zc:inline "; // C++ language conformance
+
+		cmdline = R"(cl.exe /c /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _CONSOLE /D _CRT_OBSOLETE_NO_WARNINGS /D _UNICODE /D UNICODE /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /permissive- /Fo"x64\Debug\\" /Fd"x64\Debug\vc143.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt )";
 	}
 
 	// Make sure to only compile and not link too
-	cmdline += " /c ";
+	//cmdline += " /c ";
 
 	// Remove some arguments from the command-line since they are set to different values below
 	const auto remove_arg = [&cmdline](std::string arg) {

@@ -6,8 +6,8 @@
 #pragma once
 
 #include "msf_reader.hpp"
-#include <unordered_map>
 #include <filesystem>
+#include <unordered_map>
 
 namespace blink
 {
@@ -25,12 +25,14 @@ namespace blink
 		bool operator!=(const guid &other) { return !operator==(other); }
 	};
 
-	struct source_file_indices {
+	struct source_file_indices
+	{
 		size_t module = 0;
 		size_t file = 0;
 	};
 
-	struct path_hash {
+	struct path_hash
+	{
 		std::size_t operator()(const std::filesystem::path &path) const {
 			std::string str(path.u8string());
 			for (std::size_t index = 0; index < str.size(); ++index) {
@@ -40,7 +42,8 @@ namespace blink
 		}
 	};
 
-	struct path_comp {
+	struct path_comp
+	{
 		bool operator() (const std::filesystem::path& lhs, const std::filesystem::path& rhs) const {
 			return _stricmp(lhs.u8string().c_str(), rhs.u8string().c_str()) == 0;
 		}
@@ -97,8 +100,7 @@ namespace blink
 		/// <summary>
 		/// Returns all source code file paths that were used to build the application.
 		/// </summary>
-		void read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files,
-			source_file_map &file_map);
+		void read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files, source_file_map &file_map);
 
 		/// <summary>
 		/// Read linker information.

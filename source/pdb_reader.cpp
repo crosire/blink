@@ -272,8 +272,7 @@ void blink::pdb_reader::read_object_files(std::vector<std::filesystem::path> &ob
 	}
 }
 
-void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files,
-	source_file_map &file_map)
+void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesystem::path>> &source_files, source_file_map &file_map)
 {
 	stream_reader stream(msf_reader::stream(3));
 
@@ -287,8 +286,7 @@ void blink::pdb_reader::read_source_files(std::vector<std::vector<std::filesyste
 	const uint16_t num_modules = stream.read<uint16_t>();
 	stream.skip(2); // Skip old number of file names (see comment on counting the number below)
 
-	// ignoring ModIndices since not useful
-
+	// Ignoring since it is not useful: const uint16_t *const module_file_offsets = stream.data<uint16_t>();
 	const uint16_t *const module_num_source_files = stream.data<uint16_t>(num_modules * sizeof(uint16_t));
 	const uint32_t *const file_name_offsets = stream.data<uint32_t>(num_modules * sizeof(uint16_t) * 2);
 

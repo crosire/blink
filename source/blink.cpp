@@ -157,21 +157,26 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 		print("  Started process with PID " + std::to_string(pi.dwProcessId));
 	}
 
-	size_t dir_index = 0;
 	std::vector<scoped_handle> dir_handles;
 	std::vector<scoped_handle> event_handles;
 	std::vector<notification_info> notification_infos;
-	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it) {
-		auto source_dir = *it;
-		print("Starting file system watcher for '" + source_dir.string() + "' ...");
+	for (auto it = _source_dirs.begin(); it != _source_dirs.end(); ++it)
+	{
+		print("Starting file system watcher for '" + it->string() + "' ...");
 
-		dir_handles.emplace_back();
+		scoped_handle &dir_handle = dir_handles.emplace_back();
 		event_handles.emplace_back();
 		notification_infos.emplace_back();
 
-		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
+		dir_handle = CreateFileW(it->c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+		if (dir_handle == INVALID_HANDLE_VALUE)
+		{
+			print("  Error: Could not open directory handle.");
 			return;
-		++dir_index;
+		}
+
+		if (!set_watch(dir_handle, event_handles.back(), notification_infos.back()))
+			return;
 	}
 
 	DWORD size = 0;
@@ -184,16 +189,10 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 			break;
 		if (wait_result == WAIT_TIMEOUT)
 			continue;
-		dir_index = wait_result;
-		DWORD bytes_transferred = 0;
 
-		const BOOL overlapped_success = GetOverlappedResult(dir_handles[dir_index], &notification_infos[dir_index].overlapped,
-			&bytes_transferred, TRUE);
-
-		if (!overlapped_success) {
-			print("  Error: GetOverlappedResult failed.");
-			return;
-		}
+		const size_t dir_index = wait_result;
+		if (!GetOverlappedResult(dir_handles[dir_index], &notification_infos[dir_index].overlapped, &bytes_transferred, TRUE))
+			break;
 
 		bool first_notification = true;
 		// Iterate over all notification items
@@ -258,8 +257,9 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 			// The OBJ file is not needed anymore.
 			DeleteFileW(object_file.c_str());
 		}
-		if (!set_watch(dir_index, dir_handles, event_handles, notification_infos))
-			return;
+
+		if (!set_watch(dir_handles[dir_index], event_handles[dir_index], notification_infos[dir_index]))
+			break;
 	}
 }
 
@@ -367,35 +367,22 @@ void blink::application::read_import_address_table(const BYTE *image_base)
 	}
 }
 
-bool blink::application::set_watch(
-	const size_t dir_index,
-	std::vector<scoped_handle> &dir_handles,
-	std::vector<scoped_handle> &event_handles,
-	std::vector<notification_info> &notification_infos)
+bool blink::application::set_watch(const HANDLE dir_handle, scoped_handle &event_handle, notification_info &target_info)
 {
-	dir_handles[dir_index].reset(CreateFileW(_source_dirs[dir_index].native().c_str(),
-		GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr));
-	if (dir_handles[dir_index] == INVALID_HANDLE_VALUE)
-	{
-		print("  Error: Could not open directory handle.");
-		return false;
-	}
-
-	notification_infos[dir_index].overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-	event_handles[dir_index].reset(notification_infos[dir_index].overlapped.hEvent);
-	if (NULL == event_handles[dir_index])
+	event_handle = target_info.overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	if (event_handle == NULL)
 	{
 		print("  Error: CreateEvent failed.");
 		return false;
 	}
 
 	DWORD size = 0;
-	if (0 == ReadDirectoryChangesW(dir_handles[dir_index], reinterpret_cast<FILE_NOTIFY_INFORMATION*>(notification_infos[dir_index].p_info.data()),
-		notification_infos[dir_index].p_info.size(), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &(notification_infos[dir_index].overlapped), nullptr)) {
+	if (!ReadDirectoryChangesW(dir_handle, reinterpret_cast<FILE_NOTIFY_INFORMATION *>(target_info.p_info.data()), static_cast<DWORD>(target_info.p_info.size()), TRUE, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME, &size, &target_info.overlapped, nullptr))
+	{
 		print("  Error: ReadDirectoryChangesW failed.");
 		return false;
 	}
+
 	return true;
 }
 

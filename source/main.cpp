@@ -8,6 +8,7 @@
 #include <iostream>
 #include <Windows.h>
 #include <Psapi.h>
+#include <PathCch.h>
 #include <TlHelp32.h> // GetProcessByName
 
 #pragma region CRT sections
@@ -189,7 +190,7 @@ int main(int argc, char *argv[])
 				pid = process_info.dwProcessId;
 
 				CloseHandle(process_info.hThread);
-				CloseHandle(process_info.hProcess);			
+				CloseHandle(process_info.hProcess);
 			}
 		}
 	}
@@ -235,8 +236,10 @@ int main(int argc, char *argv[])
 		return GetLastError();
 
 #ifdef _DEBUG // Use 'LoadLibrary' to create image in target application so that debug information is loaded
-	TCHAR load_path[MAX_PATH];
-	GetModuleFileName(nullptr, load_path, MAX_PATH);
+	WCHAR load_path[MAX_PATH];
+	WCHAR load_path_canonicalized[MAX_PATH];
+	GetModuleFileNameW(nullptr, load_path, MAX_PATH);
+	PathCchCanonicalize(load_path_canonicalized, MAX_PATH, load_path);
 
 	const auto load_param = VirtualAllocEx(remote_process, nullptr, MAX_PATH, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
@@ -248,7 +251,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Execute 'LoadLibrary' in target application
-	const scoped_handle load_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibrary), load_param, 0, nullptr);
+	const scoped_handle load_thread = CreateRemoteThread(remote_process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(&LoadLibraryW), load_param, 0, nullptr);
 
 	if (load_thread == nullptr)
 	{
@@ -270,10 +273,12 @@ int main(int argc, char *argv[])
 
 	for (HMODULE module : modules)
 	{
-		TCHAR module_path[MAX_PATH];
-		GetModuleFileNameEx(remote_process, module, module_path, sizeof(module_path));
+		WCHAR module_path[MAX_PATH];
+		WCHAR module_path_canonicalized[MAX_PATH];
+		GetModuleFileNameExW(remote_process, module, module_path, MAX_PATH);
+		PathCchCanonicalize(module_path_canonicalized, MAX_PATH, module_path);
 
-		if (lstrcmp(module_path, load_path) == 0)
+		if (lstrcmpW(module_path_canonicalized, load_path_canonicalized) == 0)
 		{
 			remote_baseaddress = reinterpret_cast<BYTE *>(module);
 			break;
@@ -281,7 +286,10 @@ int main(int argc, char *argv[])
 	}
 
 	// Make the entire image writable so the copy operation below can succeed
-	VirtualProtectEx(remote_process, remote_baseaddress, module_info.SizeOfImage, PAGE_EXECUTE_READWRITE, &modules_size);
+	if (remote_baseaddress != nullptr)
+	{
+		VirtualProtectEx(remote_process, remote_baseaddress, module_info.SizeOfImage, PAGE_EXECUTE_READWRITE, &modules_size);
+	}
 #else
 	const auto remote_baseaddress = static_cast<BYTE *>(VirtualAllocEx(remote_process, nullptr, module_info.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
 #endif

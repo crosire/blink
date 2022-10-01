@@ -227,14 +227,22 @@ void blink::application::run(HANDLE blink_handle, wchar_t* blink_environment, wc
 			// Read and react to compiler output messages
 			while (WaitForSingleObject(compiler_stdout, INFINITE) == WAIT_OBJECT_0 && PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr))
 			{
+				if (size == 0)
+					continue;
+
 				std::string message(size, '\0');
 				ReadFile(compiler_stdout, message.data(), size, &size, nullptr);
 
-				for (size_t offset = 0, next; (next = message.find('\n', offset)) != std::string::npos; offset = next + 1)
-					print(message.data() + offset, next - offset + 1);
+				size_t offset = 0, next;
+				do
+				{
+					next = message.find('\n', offset);
+					print(message.data() + offset, next != std::string::npos ? next - offset + 1 : message.size() - offset);
+					offset = next + 1;
+				} while (next != std::string::npos);
 
 				// Listen for special completion message
-				if (const size_t offset = message.find(" with code "); offset != std::string::npos)
+				if (offset = message.find(" with code "); offset != std::string::npos)
 				{
 					// Only load the compiled module if compilation was successful
 					if (const long exit_code = strtol(message.data() + offset + 11, nullptr, 10); exit_code == 0)
@@ -430,7 +438,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 					// CV_DebugSSubsectionHeader_t
 					const auto subsection_type = stream.read<uint32_t>();
 					const auto subsection_length = stream.read<uint32_t>();
-					if (subsection_type != 0xf1 /*DEBUG_S_SYMBOLS*/)
+					if (subsection_type != 0xf1) // DEBUG_S_SYMBOLS
 					{
 						stream.skip(subsection_length);
 						stream.align(4);

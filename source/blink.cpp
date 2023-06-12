@@ -489,7 +489,7 @@ std::string blink::application::build_compile_command_line(const std::filesystem
 	object_file = source_file; object_file.replace_extension("temp.obj");
 
 	// Append input source file to command-line
-	cmdline += '\"' + source_file.string() + '\"';
+	cmdline += " \"" + source_file.string() + '\"';
 
 	// Append output object file to command-line
 	cmdline += " /Fo\"" + object_file.string() + '\"';

@@ -108,7 +108,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 
 		if (!CreatePipe(&si.hStdInput, &compiler_stdin, &sa, 0))
 		{
-			print("  Error: Could not create input communication pipe.");
+			print("  Error: Could not create input communication pipe (error code " + std::to_string(GetLastError()) + ").");
 			return;
 		}
 
@@ -116,7 +116,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 
 		if (!CreatePipe(&compiler_stdout, &si.hStdOutput, &sa, 0))
 		{
-			print("  Error: Could not create output communication pipe.");
+			print("  Error: Could not create output communication pipe (error code " + std::to_string(GetLastError()) + ").");
 
 			CloseHandle(si.hStdInput);
 			return;
@@ -133,7 +133,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 		// This way, the user can run blink from their build prompt and the compiler process will compile similar to how it would when run from the user prompt directly
 		if (!CreateProcessW(nullptr, cmdline, nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, reinterpret_cast<LPVOID>(const_cast<wchar_t *>(blink_environment)), blink_working_directory, &si, &pi))
 		{
-			print("  Error: Could not create process.");
+			print("  Error: Could not create process (error code " + std::to_string(GetLastError()) + ").");
 
 			CloseHandle(si.hStdInput);
 			CloseHandle(si.hStdOutput);
@@ -162,7 +162,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 		dir_handle = CreateFileW(it->c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
 		if (dir_handle == INVALID_HANDLE_VALUE)
 		{
-			print("  Error: Could not open directory handle.");
+			print("  Error: Could not open directory handle (error code " + std::to_string(GetLastError()) + ").");
 			return;
 		}
 

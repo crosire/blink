@@ -191,6 +191,9 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 		for (auto info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(notification_infos[dir_index].p_info.data()); first_notification || info->NextEntryOffset != 0;
 			first_notification = false, info = reinterpret_cast<FILE_NOTIFY_INFORMATION *>(reinterpret_cast<BYTE *>(info) + info->NextEntryOffset))
 		{
+			if (info->Action == FILE_ACTION_REMOVED)
+				continue;
+
 			std::filesystem::path object_file, source_file =
 				_source_dirs[dir_index] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 

@@ -28,6 +28,7 @@ extern "C" void _initterm(_PVFV *beg, _PVFV *end);
 
 HANDLE console = INVALID_HANDLE_VALUE;
 char blink_pipe_name[MAX_PATH];
+bool compile_source = true;
 #define MAX_ENVIRONMENT_LENGTH 32767 // max for Windows
 wchar_t blink_environment[MAX_ENVIRONMENT_LENGTH];
 wchar_t blink_working_directory[MAX_PATH];
@@ -139,7 +140,7 @@ DWORD CALLBACK remote_main(BYTE *image_base)
 	scoped_handle blink_handle = CreateFileA(blink_pipe_name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
 
 	// Run main loop
-	blink::application().run(blink_handle, blink_environment, blink_working_directory);
+	blink::application().run(blink_handle, blink_environment, blink_working_directory, compile_source);
 
 	CloseHandle(console);
 
@@ -152,46 +153,57 @@ int main(int argc, char *argv[])
 
 	if (argc > 1)
 	{
-		if (argc > 2)
-		{
-			if (strcmp(argv[1], "-a") == 0) // Attach to running process
-			{
-				// Is numerical PID
-				pid = strtoul(argv[2], nullptr, 0);
+		int i = 1;
 
-				if (pid == 0)
-				{
-					// Try to look up PID of running process by name
-					pid = GetProcessByName(argv[2]);
-				}
+		for (; i < argc; i++)
+		{
+			if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0)
+			{
+				std::cout << "usage: " << argv[0] << " [options] <...>" << std::endl;
+				std::cout << "  <...>              PID or name of running process, or command-line of target application to launch" << std::endl;
+				std::cout << "  -h/--help          Show this help message" << std::endl;
+				std::cout << "  --no-compile       Watch for changes to object files and link them directly, rather than source files and compiling them first" << std::endl;
+				return 0;
 			}
+			if (std::strcmp(argv[i], "--no-compile") == 0)
+			{
+				compile_source = false;
+				continue;
+			}
+
+			// Argument is not an option, so assume this starts the remaining command-line
+			break;
 		}
-		else
+
+		// Attach to running process by PID
+		pid = std::strtoul(argv[i], nullptr, 0);
+
+		if (pid == 0)
 		{
-			// Attach to running process by PID
-			pid = strtoul(argv[1], nullptr, 0);
+			// Try to look up PID of running process by name
+			pid = GetProcessByName(argv[i]);
+		}
 
-			// Launch target application and determine PID
-			if (pid == 0)
+		if (pid == 0)
+		{
+			// Launch target application with remaining command-line and determine PID
+			STARTUPINFOA startup_info = { sizeof(startup_info) };
+			PROCESS_INFORMATION process_info = {};
+
+			std::string command_line;
+			for (; i < argc; ++i, command_line += ' ')
+				command_line += argv[i];
+
+			if (!CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
 			{
-				STARTUPINFOA startup_info = { sizeof(startup_info) };
-				PROCESS_INFORMATION process_info = {};
-
-				std::string command_line;
-				for (int i = 1; i < argc; ++i, command_line += ' ')
-					command_line += argv[i];
-
-				if (!CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup_info, &process_info))
-				{
-					std::cout << "Failed to start target application process!" << std::endl;
-					return GetLastError();
-				}
-
-				pid = process_info.dwProcessId;
-
-				CloseHandle(process_info.hThread);
-				CloseHandle(process_info.hProcess);
+				std::cout << "Failed to start target application process!" << std::endl;
+				return GetLastError();
 			}
+
+			pid = process_info.dwProcessId;
+
+			CloseHandle(process_info.hThread);
+			CloseHandle(process_info.hProcess);
 		}
 	}
 
@@ -295,7 +307,7 @@ int main(int argc, char *argv[])
 #endif
 
 	_snprintf_s(blink_pipe_name, sizeof(blink_pipe_name), "\\\\.\\pipe\\blink-%d", GetCurrentProcessId());
-	#define NAMED_PIPE_SIZE 1024
+#define NAMED_PIPE_SIZE 1024
 	// use duplex named pipe, so remote thread can quit and free up memory, when blink.exe quits
 	scoped_handle blink_pipe_handle = CreateNamedPipeA(
 		reinterpret_cast<LPCSTR>(blink_pipe_name),

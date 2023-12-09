@@ -51,7 +51,7 @@ blink::application::application()
 	_symbols.insert({ "__ImageBase", _image_base });
 }
 
-void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_environment, const wchar_t *blink_working_directory)
+void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_environment, const wchar_t *blink_working_directory, bool compile_source)
 {
 	std::vector<const BYTE *> dlls;
 
@@ -68,26 +68,33 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 			return;
 		}
 
-		std::vector<std::filesystem::path> cpp_files;
+		std::vector<std::filesystem::path> source_files;
 
 		for (size_t i = 0; i < _object_files.size(); ++i)
 		{
 			if (std::error_code ec; _object_files[i].extension() != ".obj" || !std::filesystem::exists(_object_files[i], ec))
 				continue;
 
-			const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
-				[](const auto &path) { const auto ext = path.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx"; });
-
-			if (it != _source_files[i].end())
+			if (compile_source)
 			{
-				print("  Found source file: " + it->string());
+				const auto it = std::find_if(_source_files[i].begin(), _source_files[i].end(),
+					[](const auto &path) { const auto ext = path.extension(); return ext == ".c" || ext == ".cpp" || ext == ".cxx"; });
 
-				cpp_files.push_back(*it);
+				if (it != _source_files[i].end())
+				{
+					print("  Found source file: " + it->string());
+
+					source_files.push_back(*it);
+				}
+			}
+			else
+			{
+				source_files.push_back(_object_files[i]);
 			}
 		}
 
 		// The linker is invoked in solution directory, which may be out of source directory. Use source common paths instead.
-		find_common_paths(cpp_files, _source_dirs);
+		find_common_paths(source_files, _source_dirs);
 	}
 
 	if (_source_dirs.empty())
@@ -98,7 +105,9 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 
 	scoped_handle compiler_stdin, compiler_stdout;
 
-	{	print("Starting compiler process ...");
+	if (compile_source)
+	{
+		print("Starting compiler process ...");
 
 		// Launch compiler process
 		STARTUPINFO si = { sizeof(si) };
@@ -174,7 +183,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 	DWORD bytes_written = 0;
 	DWORD bytes_transferred = 0;
 	// Check that both the compiler and blink application are still running
-	while (PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr) && PeekNamedPipe(blink_handle, nullptr, 0, nullptr, &size, nullptr))
+	while (PeekNamedPipe(blink_handle, nullptr, 0, nullptr, &size, nullptr) && (!compile_source || PeekNamedPipe(compiler_stdout, nullptr, 0, nullptr, &size, nullptr)))
 	{
 		const DWORD wait_result = WaitForMultipleObjects(static_cast<DWORD>(event_handles.size()), reinterpret_cast<const HANDLE *>(event_handles.data()), FALSE, 1000);
 		if (wait_result == WAIT_FAILED)
@@ -198,7 +207,7 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 				_source_dirs[dir_index] / std::wstring(info->FileName, info->FileNameLength / sizeof(WCHAR));
 
 			// Ignore changes to files that are not C++ source files
-			if (const auto ext = source_file.extension(); ext != ".c" && ext != ".cpp" && ext != ".cxx")
+			if (const auto ext = source_file.extension(); compile_source ? (ext != ".c" && ext != ".cpp" && ext != ".cxx") : (ext != ".obj"))
 				continue;
 
 			// Ignore duplicated notifications by comparing times and skipping any changes that are not older than 3 seconds
@@ -208,6 +217,16 @@ void blink::application::run(const HANDLE blink_handle, const wchar_t *blink_env
 				_last_modifications[source_file.string()] = current_time;
 
 			print("Detected modification to: " + source_file.string());
+
+			if (!compile_source)
+			{
+				object_file = std::move(source_file);
+
+				call_symbol("__blink_sync", object_file.string().c_str()); // Notify application that we want to link an object file
+				const bool link_success = link(object_file);
+				call_symbol("__blink_release", object_file.string().c_str(), link_success); // Notify application that we have finished work
+				continue;
+			}
 
 			// Build compiler command line
 			std::string cmdline = build_compile_command_line(source_file, object_file);

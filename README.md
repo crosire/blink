@@ -28,11 +28,13 @@ A quick overview of what each of the source code files contain:
 
 ## Usage
 
-Once you build blink, there are two ways to use it:
+Once you build blink, there are a couple of ways to use it:
 1) Either launch your application via blink:\
 	```blink.exe foo.exe -arguments```
 2) Or attach blink to an already running application:\
 	```blink.exe PID``` where PID is the process ID to attach to
+3) Add the `--no-compile` option before the other arguments to make blink watch for modifications to object files, rather than watching for and compiling the source files:\
+    ```blink.exe --no-compile PID```
 
 Now simply do changes to any of the source code files of your application and see how they are reflected right away. Keep in mind that since blink patches on a function-level, you need a function that is repeatedly called, since **changes are only made visible the next time a function is entered**.
 
